@@ -69,6 +69,7 @@ impl GlutinWindow {
         use input::Input;
 
         if let Some((x, y)) = self.last_mouse_pos {
+            self.last_mouse_pos = None;
             return Some(Input::Move(input::Motion::MouseRelative(x, y)));
         }
 
