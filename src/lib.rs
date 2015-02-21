@@ -21,7 +21,8 @@ use input::{
 use window::{
     WindowSettings,
     ShouldClose, Size, PollEvent, SwapBuffers,
-    CaptureCursor, DrawSize, Title,
+    //CaptureCursor,
+    DrawSize, Title,
     ExitOnEsc
 };
 use shader_version::opengl::OpenGL;
@@ -35,6 +36,7 @@ pub struct GlutinWindow {
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
+    should_close: bool,
 }
 
 impl GlutinWindow {
@@ -61,6 +63,7 @@ impl GlutinWindow {
             last_mouse_pos: None,
             title: settings.title,
             exit_on_esc: settings.exit_on_esc,
+            should_close: false,
         }
     }
 
@@ -81,11 +84,14 @@ impl GlutinWindow {
                 Some(Input::Text(ch.to_string())),
             Some(E::Focused(focused)) =>
                 Some(Input::Focus(focused)),
-            Some(E::KeyboardInput(glutin::ElementState::Pressed,
-                _, Some(key))) =>
-                Some(Input::Press(Button::Keyboard(map_key(key)))),
-            Some(E::KeyboardInput(glutin::ElementState::Released,
-                _, Some(key))) =>
+            Some(E::KeyboardInput(glutin::ElementState::Pressed, _, Some(key))) => {
+                let piston_key = map_key(key);
+                if let (true, input::keyboard::Key::Escape) = (self.exit_on_esc, piston_key) {
+                    self.should_close = true;
+                }
+                Some(Input::Press(Button::Keyboard(piston_key)))
+            },
+            Some(E::KeyboardInput(glutin::ElementState::Released, _, Some(key))) =>
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
             Some(E::MouseMoved((x, y))) => {
                 self.last_mouse_pos = Some((x as f64, y as f64));
@@ -120,7 +126,7 @@ get:
             Size([0, 0])
         }
     }
-    fn () -> ShouldClose [] { ShouldClose(obj.window.should_close()) }
+    fn () -> ShouldClose [] { ShouldClose(obj.window.should_close() || obj.should_close) }
     fn () -> DrawSize [] {
         if let Some((w, h)) = obj.window.get_inner_size() {
             DrawSize([w, h])
@@ -135,7 +141,7 @@ set:
     // fn (val: ShouldClose) [] {}
     fn (val: Title) [] {
         obj.title = val.0;
-        obj.window.set_title(&obj.title[]);
+        obj.window.set_title(&obj.title);
     }
     fn (val: ExitOnEsc) [] { obj.exit_on_esc = val.0; }
 action:
