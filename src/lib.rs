@@ -80,8 +80,15 @@ impl GlutinWindow {
             None => None,
             Some(E::Resized(w, h)) =>
                 Some(Input::Resize(w, h)),
-            Some(E::ReceivedCharacter(ch)) =>
-                Some(Input::Text(ch.to_string())),
+            Some(E::ReceivedCharacter(ch)) => {
+                println!("{:?}", ch);
+                let string = match ch {
+                    // Ignore backspace and return ascii for Text event (like sdl2).
+                    '\u{7f}' | '\r' => "".to_string(),
+                    _ => ch.to_string(),
+                };
+                Some(Input::Text(string))
+            },
             Some(E::Focused(focused)) =>
                 Some(Input::Focus(focused)),
             Some(E::KeyboardInput(glutin::ElementState::Pressed, _, Some(key))) => {
