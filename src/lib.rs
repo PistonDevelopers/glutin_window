@@ -26,6 +26,7 @@ use window::{
     ExitOnEsc
 };
 use shader_version::opengl::OpenGL;
+use quack::Associative;
 
 /// Contains stuff for game window.
 pub struct GlutinWindow {
@@ -158,6 +159,10 @@ set:
 action:
     fn (__: PollEvent) -> Option<Input> [] { obj.poll_event() }
     fn (__: SwapBuffers) -> () [] { obj.window.swap_buffers(); }
+}
+
+impl Associative for (PollEvent, GlutinWindow) {
+    type Type = Input;
 }
 
 /// Maps Glutin's key to Piston's key.
