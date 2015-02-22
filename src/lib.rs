@@ -46,8 +46,10 @@ impl GlutinWindow {
         let mut builder = glutin::WindowBuilder::new()
             .with_dimensions(settings.size[0], settings.size[1])
             .with_gl_version((major as u32, minor as u32))
-            .with_title(settings.title.clone())
-            .with_multisampling(settings.samples as u16);
+            .with_title(settings.title.clone());
+        if settings.samples != 0 {
+            builder = builder.with_multisampling(settings.samples as u16);
+        }
         if settings.fullscreen {
             builder = builder.with_fullscreen(glutin::get_primary_monitor());
         }
