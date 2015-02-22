@@ -84,9 +84,12 @@ impl GlutinWindow {
                 Some(Input::Resize(w, h)),
             Some(E::ReceivedCharacter(ch)) => {
                 let string = match ch {
-                    // Ignore backspace and return ascii for Text event (like sdl2).
-                    '\u{7f}' | '\r' => "".to_string(),
-                    _ => ch.to_string(),
+                    // Ignore control characters and return ascii for Text event (like sdl2).
+                    '\u{7f}' | // Delete
+                    '\u{1b}' | // Escape
+                    '\u{8}'  | // Backspace
+                    '\r' | '\n' | '\t' => "".to_string(),
+                    _ => ch.to_string()
                 };
                 Some(Input::Text(string))
             },
