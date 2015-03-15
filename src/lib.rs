@@ -132,8 +132,9 @@ quack! {
 obj: GlutinWindow[]
 get:
     fn () -> Size [] {
-        if let Some((w, h)) = obj.window.get_outer_size() {
-            Size([w, h])
+        let f = obj.window.hidpi_factor();
+        if let Some((w, h)) = obj.window.get_inner_size() {
+            Size([(w as f32 / f) as u32, (h as f32 / f) as u32])
         } else {
             Size([0, 0])
         }
