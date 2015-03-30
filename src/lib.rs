@@ -21,7 +21,7 @@ use input::{
 use window::{
     WindowSettings,
     ShouldClose, Size, PollEvent, SwapBuffers,
-    //CaptureCursor,
+    CaptureCursor,
     DrawSize, Title,
     ExitOnEsc
 };
@@ -150,7 +150,14 @@ get:
     fn () -> Title [] { Title(obj.title.clone()) }
     fn () -> ExitOnEsc [] { ExitOnEsc(obj.exit_on_esc) }
 set:
-    // fn (val: CaptureCursor) [] {}
+    fn (val: CaptureCursor) [] {
+        use glutin::CursorState;
+        if val.0 {
+            let _ = obj.window.set_cursor_state(CursorState::Grab);
+        } else {
+            let _ = obj.window.set_cursor_state(CursorState::Normal);
+        }
+    }
     fn (val: ShouldClose) [] { obj.should_close = val.0; }
     fn (val: Title) [] {
         obj.title = val.0;
