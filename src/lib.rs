@@ -151,7 +151,7 @@ get:
     fn () -> ExitOnEsc [] { ExitOnEsc(obj.exit_on_esc) }
 set:
     // fn (val: CaptureCursor) [] {}
-    fn (val: ShouldClose) [] { obj.should_close = true; }
+    fn (val: ShouldClose) [] { obj.should_close = val.0; }
     fn (val: Title) [] {
         obj.title = val.0;
         obj.window.set_title(&obj.title);
