@@ -19,14 +19,21 @@ use input::{
     Motion,
 };
 use window::{
+    OpenGLWindow,
+    ProcAddress,
     WindowSettings,
-    ShouldClose, Size, PollEvent, SwapBuffers,
+    ShouldClose,
+    Size,
+    PollEvent,
+    SwapBuffers,
     CaptureCursor,
-    DrawSize, Title,
+    DrawSize,
+    Title,
     ExitOnEsc
 };
-use shader_version::opengl::OpenGL;
 use quack::Associative;
+
+pub use shader_version::OpenGL;
 
 /// Contains stuff for game window.
 pub struct GlutinWindow {
@@ -41,7 +48,7 @@ pub struct GlutinWindow {
 }
 
 impl GlutinWindow {
-    /// Creates a new game window for GLFW.
+    /// Creates a new game window for Glutin.
     pub fn new(opengl: OpenGL, settings: WindowSettings) -> GlutinWindow {
         let (major, minor) = opengl.get_major_minor();
         let mut builder = glutin::WindowBuilder::new()
@@ -58,7 +65,7 @@ impl GlutinWindow {
             .build().unwrap();
         unsafe { window.make_current(); }
 
-        // Load the OpenGL function pointers
+        // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s));
 
         GlutinWindow {
@@ -120,12 +127,6 @@ impl GlutinWindow {
             _ => None,
         }
     }
-
-    /*
-    fn capture_cursor(&mut self, enabled: bool) {
-
-    }
-    */
 }
 
 quack! {
@@ -171,6 +172,22 @@ action:
 
 impl Associative for (PollEvent, GlutinWindow) {
     type Type = Input;
+}
+
+impl OpenGLWindow for GlutinWindow {
+    fn get_proc_address(&mut self, proc_name: &str) -> ProcAddress {
+        self.window.get_proc_address(proc_name)
+    }
+
+    fn is_current(&self) -> bool {
+        self.window.is_current()
+    }
+
+    fn make_current(&mut self) {
+        unsafe {
+            self.window.make_current()
+        }
+    }
 }
 
 /// Maps Glutin's key to Piston's key.
