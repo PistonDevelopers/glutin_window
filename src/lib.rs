@@ -4,34 +4,24 @@
 
 extern crate glutin;
 extern crate gl;
-extern crate window;
+extern crate piston;
 extern crate shader_version;
-extern crate input;
-#[macro_use]
-extern crate quack;
 
 // External crates.
-use input::{
+use piston::input::{
     keyboard,
     MouseButton,
     Button,
     Input,
-    Motion,
 };
-use window::{
+use piston::window::{
     OpenGLWindow,
+    Window,
+    AdvancedWindow,
     ProcAddress,
     WindowSettings,
-    ShouldClose,
     Size,
-    PollEvent,
-    SwapBuffers,
-    CaptureCursor,
-    DrawSize,
-    Title,
-    ExitOnEsc
 };
-use quack::Associative;
 
 pub use shader_version::OpenGL;
 
@@ -51,14 +41,16 @@ impl GlutinWindow {
     /// Creates a new game window for Glutin.
     pub fn new(opengl: OpenGL, settings: WindowSettings) -> GlutinWindow {
         let (major, minor) = opengl.get_major_minor();
+        let size = settings.get_size();
         let mut builder = glutin::WindowBuilder::new()
-            .with_dimensions(settings.size[0], settings.size[1])
+            .with_dimensions(size.width, size.height)
             .with_gl_version((major as u32, minor as u32))
-            .with_title(settings.title.clone());
-        if settings.samples != 0 {
-            builder = builder.with_multisampling(settings.samples as u16);
+            .with_title(settings.get_title());
+        let samples = settings.get_samples();
+        if samples != 0 {
+            builder = builder.with_multisampling(samples as u16);
         }
-        if settings.fullscreen {
+        if settings.get_fullscreen() {
             builder = builder.with_fullscreen(glutin::get_primary_monitor());
         }
         let window = builder
@@ -71,19 +63,19 @@ impl GlutinWindow {
         GlutinWindow {
             window: window,
             last_mouse_pos: None,
-            title: settings.title,
-            exit_on_esc: settings.exit_on_esc,
+            title: settings.get_title(),
+            exit_on_esc: settings.get_exit_on_esc(),
             should_close: false,
         }
     }
 
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
-        use input::Input;
+        use piston::input::{ Key, Input, Motion };
 
         if let Some((x, y)) = self.last_mouse_pos {
             self.last_mouse_pos = None;
-            return Some(Input::Move(input::Motion::MouseRelative(x, y)));
+            return Some(Input::Move(Motion::MouseRelative(x, y)));
         }
 
         match self.window.poll_events().next() {
@@ -105,7 +97,7 @@ impl GlutinWindow {
                 Some(Input::Focus(focused)),
             Some(E::KeyboardInput(glutin::ElementState::Pressed, _, Some(key))) => {
                 let piston_key = map_key(key);
-                if let (true, input::keyboard::Key::Escape) = (self.exit_on_esc, piston_key) {
+                if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
                     self.should_close = true;
                 }
                 Some(Input::Press(Button::Keyboard(piston_key)))
@@ -129,49 +121,47 @@ impl GlutinWindow {
     }
 }
 
-quack! {
-obj: GlutinWindow[]
-get:
-    fn () -> Size [] {
-        let f = obj.window.hidpi_factor();
-        if let Some((w, h)) = obj.window.get_inner_size() {
-            Size([(w as f32 / f) as u32, (h as f32 / f) as u32])
+impl Window for GlutinWindow {
+    type Event = Input;
+
+    fn size(&self) -> Size {
+        let f = self.window.hidpi_factor();
+        if let Some((w, h)) = self.window.get_inner_size() {
+            Size { width: (w as f32 / f) as u32, height: (h as f32 / f) as u32 }
         } else {
-            Size([0, 0])
+            Size { width: 0, height: 0 }
         }
     }
-    fn () -> ShouldClose [] { ShouldClose(obj.window.should_close() || obj.should_close) }
-    fn () -> DrawSize [] {
-        if let Some((w, h)) = obj.window.get_inner_size() {
-            DrawSize([w, h])
-        } else {
-            DrawSize([0, 0])
-        }
+    fn should_close(&self) -> bool {
+        self.window.should_close() || self.should_close
     }
-    fn () -> Title [] { Title(obj.title.clone()) }
-    fn () -> ExitOnEsc [] { ExitOnEsc(obj.exit_on_esc) }
-set:
-    fn (val: CaptureCursor) [] {
-        use glutin::CursorState;
-        if val.0 {
-            let _ = obj.window.set_cursor_state(CursorState::Grab);
-        } else {
-            let _ = obj.window.set_cursor_state(CursorState::Normal);
-        }
-    }
-    fn (val: ShouldClose) [] { obj.should_close = val.0; }
-    fn (val: Title) [] {
-        obj.title = val.0;
-        obj.window.set_title(&obj.title);
-    }
-    fn (val: ExitOnEsc) [] { obj.exit_on_esc = val.0; }
-action:
-    fn (__: PollEvent) -> Option<Input> [] { obj.poll_event() }
-    fn (__: SwapBuffers) -> () [] { obj.window.swap_buffers(); }
+    fn swap_buffers(&mut self) { self.window.swap_buffers(); }
+    fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
 
-impl Associative for (PollEvent, GlutinWindow) {
-    type Type = Input;
+impl AdvancedWindow for GlutinWindow {
+    fn draw_size(&self) -> Size {
+        if let Some((w, h)) = self.window.get_inner_size() {
+            Size { width: w, height: h }
+        } else {
+            Size { width: 0, height: 0 }
+        }
+    }
+    fn get_title(&self) -> String { self.title.clone() }
+    fn set_title(&mut self, value: String) {
+        self.title = value;
+        self.window.set_title(&self.title);
+    }
+    fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
+    fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
+    fn set_capture_cursor(&mut self, value: bool) {
+        use glutin::CursorState;
+        if value {
+            let _ = self.window.set_cursor_state(CursorState::Grab);
+        } else {
+            let _ = self.window.set_cursor_state(CursorState::Normal);
+        }
+    }
 }
 
 impl OpenGLWindow for GlutinWindow {
@@ -192,7 +182,7 @@ impl OpenGLWindow for GlutinWindow {
 
 /// Maps Glutin's key to Piston's key.
 pub fn map_key(keycode: glutin::VirtualKeyCode) -> keyboard::Key {
-    use input::keyboard::Key;
+    use piston::input::keyboard::Key;
     use glutin::VirtualKeyCode as K;
 
     match keycode {
