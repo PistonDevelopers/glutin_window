@@ -4,17 +4,18 @@
 
 extern crate glutin;
 extern crate gl;
-extern crate piston;
+extern crate input;
+extern crate window;
 extern crate shader_version;
 
 // External crates.
-use piston::input::{
+use input::{
     keyboard,
     MouseButton,
     Button,
     Input,
 };
-use piston::window::{
+use window::{
     OpenGLWindow,
     Window,
     AdvancedWindow,
@@ -71,7 +72,7 @@ impl GlutinWindow {
 
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
-        use piston::input::{ Key, Input, Motion };
+        use input::{ Key, Input, Motion };
 
         if let Some((x, y)) = self.last_mouse_pos {
             self.last_mouse_pos = None;
@@ -182,7 +183,7 @@ impl OpenGLWindow for GlutinWindow {
 
 /// Maps Glutin's key to Piston's key.
 pub fn map_key(keycode: glutin::VirtualKeyCode) -> keyboard::Key {
-    use piston::input::keyboard::Key;
+    use input::keyboard::Key;
     use glutin::VirtualKeyCode as K;
 
     match keycode {

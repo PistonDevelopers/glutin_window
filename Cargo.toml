@@ -15,8 +15,12 @@ homepage = "https://github.com/pistondevelopers/glutin_window"
 name = "glutin_window"
 path = "src/lib.rs"
 
-[dependencies.piston]
-git = "https://github.com/PistonDevelopers/piston"
+[dependencies.pistoncore-input]
+git = "https://github.com/PistonDevelopers/input"
+#version = "0.0.9"
+
+[dependencies.pistoncore-window]
+git = "https://github.com/PistonDevelopers/window"
 #version = "0.1.0"
 
 [dependencies.shader_version]
