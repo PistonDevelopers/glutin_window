@@ -109,7 +109,7 @@ impl GlutinWindow {
                 self.last_mouse_pos = Some((x as f64, y as f64));
                 Some(Input::Move(
                     Motion::MouseCursor(x as f64, y as f64)))
-            }
+            },
             Some(E::MouseWheel(y)) =>
                 Some(Input::Move(
                     Motion::MouseScroll(0.0, y as f64))),
