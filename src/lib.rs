@@ -133,6 +133,13 @@ impl Window for GlutinWindow {
             Size { width: 0, height: 0 }
         }
     }
+    fn draw_size(&self) -> Size {
+        if let Some((w, h)) = self.window.get_inner_size() {
+            Size { width: w, height: h }
+        } else {
+            Size { width: 0, height: 0 }
+        }
+    }
     fn should_close(&self) -> bool {
         self.window.should_close() || self.should_close
     }
@@ -141,13 +148,6 @@ impl Window for GlutinWindow {
 }
 
 impl AdvancedWindow for GlutinWindow {
-    fn draw_size(&self) -> Size {
-        if let Some((w, h)) = self.window.get_inner_size() {
-            Size { width: w, height: h }
-        } else {
-            Size { width: 0, height: 0 }
-        }
-    }
     fn get_title(&self) -> String { self.title.clone() }
     fn set_title(&mut self, value: String) {
         self.title = value;
