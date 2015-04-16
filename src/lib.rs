@@ -23,6 +23,7 @@ use window::{
     WindowSettings,
     Size,
 };
+use glutin::{ Api, GlRequest };
 
 pub use shader_version::OpenGL;
 
@@ -40,12 +41,12 @@ pub struct GlutinWindow {
 
 impl GlutinWindow {
     /// Creates a new game window for Glutin.
-    pub fn new(opengl: OpenGL, settings: WindowSettings) -> GlutinWindow {
+    pub fn new(opengl: OpenGL, settings: WindowSettings) -> Self {
         let (major, minor) = opengl.get_major_minor();
         let size = settings.get_size();
         let mut builder = glutin::WindowBuilder::new()
             .with_dimensions(size.width, size.height)
-            .with_gl_version((major as u32, minor as u32))
+            .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
             .with_title(settings.get_title());
         let samples = settings.get_samples();
         if samples != 0 {
@@ -54,8 +55,7 @@ impl GlutinWindow {
         if settings.get_fullscreen() {
             builder = builder.with_fullscreen(glutin::get_primary_monitor());
         }
-        let window = builder
-            .build().unwrap();
+        let window = builder.build().unwrap();
         unsafe { window.make_current(); }
 
         // Load the OpenGL function pointers.
@@ -128,16 +128,16 @@ impl Window for GlutinWindow {
     fn size(&self) -> Size {
         let f = self.window.hidpi_factor();
         if let Some((w, h)) = self.window.get_inner_size() {
-            Size { width: (w as f32 / f) as u32, height: (h as f32 / f) as u32 }
+            ((w as f32 / f) as u32, (h as f32 / f) as u32).into()
         } else {
-            Size { width: 0, height: 0 }
+            (0, 0).into()
         }
     }
     fn draw_size(&self) -> Size {
-        if let Some((w, h)) = self.window.get_inner_size() {
-            Size { width: w, height: h }
+        if let Some(size) = self.window.get_inner_size() {
+            size.into()
         } else {
-            Size { width: 0, height: 0 }
+            (0, 0).into()
         }
     }
     fn should_close(&self) -> bool {
