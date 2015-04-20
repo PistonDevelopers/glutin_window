@@ -21,16 +21,16 @@ git = "https://github.com/PistonDevelopers/input"
 
 [dependencies.pistoncore-window]
 git = "https://github.com/PistonDevelopers/window"
-#version = "0.1.0"
+#version = "0.1.1"
 
 [dependencies.shader_version]
 git = "https://github.com/PistonDevelopers/shader_version"
-#version = "0.0.0"
+#version = "0.0.6"
 
 [dependencies.glutin]
 git = "https://github.com/tomaka/glutin"
-#version = "0.0.0"
+#version = "0.0.25"
 
 [dependencies.gl]
 git = "https://github.com/bjz/gl-rs"
-#version = "0.0.2"
+#version = "0.0.12"
