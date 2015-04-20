@@ -40,6 +40,7 @@ pub struct GlutinWindow {
 }
 
 impl GlutinWindow {
+
     /// Creates a new game window for Glutin.
     pub fn new(opengl: OpenGL, settings: WindowSettings) -> Self {
         let (major, minor) = opengl.get_major_minor();
@@ -107,12 +108,11 @@ impl GlutinWindow {
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
             Some(E::MouseMoved((x, y))) => {
                 self.last_mouse_pos = Some((x as f64, y as f64));
-                Some(Input::Move(
-                    Motion::MouseCursor(x as f64, y as f64)))
+                let f = self.window.hidpi_factor();
+                Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
             }
             Some(E::MouseWheel(y)) =>
-                Some(Input::Move(
-                    Motion::MouseScroll(0.0, y as f64))),
+                Some(Input::Move(Motion::MouseScroll(0.0, y as f64))),
             Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::MouseInput(glutin::ElementState::Released, button)) =>
@@ -126,16 +126,16 @@ impl Window for GlutinWindow {
     type Event = Input;
 
     fn size(&self) -> Size {
-        let f = self.window.hidpi_factor();
-        if let Some((w, h)) = self.window.get_inner_size() {
-            ((w as f32 / f) as u32, (h as f32 / f) as u32).into()
+        if let Some(size) = self.window.get_inner_size() {
+            size.into()
         } else {
             (0, 0).into()
         }
     }
     fn draw_size(&self) -> Size {
-        if let Some(size) = self.window.get_inner_size() {
-            size.into()
+        let f = self.window.hidpi_factor();
+        if let Some((w, h)) = self.window.get_inner_size() {
+            ((w as f32 * f) as u32, (h as f32 * f) as u32).into()
         } else {
             (0, 0).into()
         }
