@@ -56,6 +56,9 @@ impl GlutinWindow {
         if settings.get_fullscreen() {
             builder = builder.with_fullscreen(glutin::get_primary_monitor());
         }
+        if settings.get_vsync() {
+            builder = builder.with_vsync();
+        }
         let window = builder.build().unwrap();
         unsafe { window.make_current(); }
 
