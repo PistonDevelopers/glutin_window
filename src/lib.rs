@@ -111,8 +111,8 @@ impl GlutinWindow {
                 let f = self.window.hidpi_factor();
                 Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
             }
-            Some(E::MouseWheel(y)) =>
-                Some(Input::Move(Motion::MouseScroll(0.0, y as f64))),
+            Some(E::MouseWheel(x, y)) =>
+                Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::MouseInput(glutin::ElementState::Released, button)) =>
