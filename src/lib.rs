@@ -31,8 +31,6 @@ pub use shader_version::OpenGL;
 pub struct GlutinWindow {
     /// The window.
     pub window: glutin::Window,
-    // Used to compute relative mouse movement.
-    last_mouse_pos: Option<(f64, f64)>,
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
@@ -67,7 +65,6 @@ impl GlutinWindow {
 
         GlutinWindow {
             window: window,
-            last_mouse_pos: None,
             title: settings.get_title(),
             exit_on_esc: settings.get_exit_on_esc(),
             should_close: false,
@@ -77,11 +74,6 @@ impl GlutinWindow {
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
         use input::{ Key, Input, Motion };
-
-        if let Some((x, y)) = self.last_mouse_pos {
-            self.last_mouse_pos = None;
-            return Some(Input::Move(Motion::MouseRelative(x, y)));
-        }
 
         match self.window.poll_events().next() {
             None => None,
@@ -110,7 +102,6 @@ impl GlutinWindow {
             Some(E::KeyboardInput(glutin::ElementState::Released, _, Some(key))) =>
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
             Some(E::MouseMoved((x, y))) => {
-                self.last_mouse_pos = Some((x as f64, y as f64));
                 let f = self.window.hidpi_factor();
                 Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
             }
