@@ -56,6 +56,9 @@ impl GlutinWindow {
         if settings.get_fullscreen() {
             builder = builder.with_fullscreen(glutin::get_primary_monitor());
         }
+        if settings.get_vsync() {
+            builder = builder.with_vsync();
+        }
         let window = builder.build().unwrap();
         unsafe { window.make_current(); }
 
@@ -112,7 +115,7 @@ impl GlutinWindow {
                 Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
             }
             Some(E::MouseWheel(x, y)) =>
-                Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
+                Some(Input::Move(Motion::MouseScroll(x, y))),
             Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::MouseInput(glutin::ElementState::Released, button)) =>
