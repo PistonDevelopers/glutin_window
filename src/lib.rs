@@ -40,7 +40,8 @@ pub struct GlutinWindow {
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
-    pub fn new(opengl: OpenGL, settings: WindowSettings) -> Self {
+    pub fn new(settings: WindowSettings) -> Self {
+        let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::_3_2);
         let (major, minor) = opengl.get_major_minor();
         let size = settings.get_size();
         let mut builder = glutin::WindowBuilder::new()
@@ -113,6 +114,12 @@ impl GlutinWindow {
                 Some(Input::Release(Button::Mouse(map_mouse(button)))),
             _ => None,
         }
+    }
+}
+
+impl From<WindowSettings> for GlutinWindow {
+    fn from(settings: WindowSettings) -> GlutinWindow {
+        GlutinWindow::new(settings)
     }
 }
 
