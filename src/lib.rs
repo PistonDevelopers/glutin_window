@@ -112,6 +112,10 @@ impl GlutinWindow {
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::MouseInput(glutin::ElementState::Released, button)) =>
                 Some(Input::Release(Button::Mouse(map_mouse(button)))),
+            Some(E::Closed) => {
+                self.should_close = true;
+                self.poll_event()
+            }
             _ => None,
         }
     }
@@ -141,9 +145,7 @@ impl Window for GlutinWindow {
             (0, 0).into()
         }
     }
-    fn should_close(&self) -> bool {
-        self.window.is_closed() || self.should_close
-    }
+    fn should_close(&self) -> bool { self.should_close }
     fn swap_buffers(&mut self) { self.window.swap_buffers(); }
     fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
