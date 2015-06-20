@@ -59,7 +59,7 @@ impl GlutinWindow {
             builder = builder.with_vsync();
         }
         let window = builder.build().unwrap();
-        unsafe { window.make_current(); }
+        unsafe { window.make_current().unwrap(); }
 
         // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s));
@@ -74,6 +74,7 @@ impl GlutinWindow {
 
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
+        use glutin::MouseScrollDelta;
         use input::{ Key, Input, Motion };
 
         match self.window.poll_events().next() {
@@ -106,8 +107,8 @@ impl GlutinWindow {
                 let f = self.window.hidpi_factor();
                 Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
             }
-            Some(E::MouseWheel(x, y)) =>
-                Some(Input::Move(Motion::MouseScroll(x, y))),
+            Some(E::MouseWheel(MouseScrollDelta::PixelDelta(x, y))) =>
+                Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::MouseInput(glutin::ElementState::Released, button)) =>
@@ -146,7 +147,7 @@ impl Window for GlutinWindow {
         }
     }
     fn should_close(&self) -> bool { self.should_close }
-    fn swap_buffers(&mut self) { self.window.swap_buffers(); }
+    fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
     fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
 
@@ -179,7 +180,7 @@ impl OpenGLWindow for GlutinWindow {
 
     fn make_current(&mut self) {
         unsafe {
-            self.window.make_current()
+            self.window.make_current().unwrap()
         }
     }
 }
