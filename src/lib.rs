@@ -41,7 +41,7 @@ impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
     pub fn new(settings: WindowSettings) -> Self {
-        let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::_3_2);
+        let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
         let (major, minor) = opengl.get_major_minor();
         let size = settings.get_size();
         let mut builder = glutin::WindowBuilder::new()
