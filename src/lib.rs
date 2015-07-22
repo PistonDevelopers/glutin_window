@@ -37,28 +37,40 @@ pub struct GlutinWindow {
     should_close: bool,
 }
 
+fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
+    let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
+    let (major, minor) = opengl.get_major_minor();
+    let size = settings.get_size();
+    let mut builder = glutin::WindowBuilder::new()
+        .with_dimensions(size.width, size.height)
+        .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
+        .with_title(settings.get_title());
+    let samples = settings.get_samples();
+    if settings.get_fullscreen() {
+        builder = builder.with_fullscreen(glutin::get_primary_monitor());
+    }
+    if settings.get_vsync() {
+        builder = builder.with_vsync();
+    }
+    if samples != 0 {
+        builder = builder.with_multisampling(samples as u16);
+    }
+    builder
+}
+
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
     pub fn new(settings: WindowSettings) -> Self {
-        let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
-        let (major, minor) = opengl.get_major_minor();
-        let size = settings.get_size();
-        let mut builder = glutin::WindowBuilder::new()
-            .with_dimensions(size.width, size.height)
-            .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
-            .with_title(settings.get_title());
-        let samples = settings.get_samples();
-        if samples != 0 {
-            builder = builder.with_multisampling(samples as u16);
-        }
-        if settings.get_fullscreen() {
-            builder = builder.with_fullscreen(glutin::get_primary_monitor());
-        }
-        if settings.get_vsync() {
-            builder = builder.with_vsync();
-        }
-        let window = builder.build().unwrap();
+        let title = settings.get_title();
+        let exit_on_esc = settings.get_exit_on_esc();
+        let window = builder_from_settings(&settings).build();
+        let window = match window {
+                Ok(window) => window,
+                Err(_) => {
+                    builder_from_settings(&settings.samples(0)).build().unwrap()
+                }
+            };
         unsafe { window.make_current().unwrap(); }
 
         // Load the OpenGL function pointers.
@@ -66,8 +78,8 @@ impl GlutinWindow {
 
         GlutinWindow {
             window: window,
-            title: settings.get_title(),
-            exit_on_esc: settings.get_exit_on_esc(),
+            title: title,
+            exit_on_esc: exit_on_esc,
             should_close: false,
         }
     }
