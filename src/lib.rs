@@ -159,6 +159,7 @@ impl Window for GlutinWindow {
         }
     }
     fn should_close(&self) -> bool { self.should_close }
+    fn set_should_close(&mut self, value: bool) { self.should_close = value; }
     fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
     fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
