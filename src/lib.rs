@@ -16,6 +16,7 @@ use input::{
     Input,
 };
 use window::{
+    BuildFromWindowSettings,
     OpenGLWindow,
     Window,
     AdvancedWindow,
@@ -173,11 +174,14 @@ impl Window for GlutinWindow {
     fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
 
-impl AdvancedWindow for GlutinWindow {
+impl BuildFromWindowSettings for GlutinWindow {
     fn build_from_window_settings(settings: WindowSettings)
     -> Result<Self, String> {
         GlutinWindow::new(settings)
     }
+}
+
+impl AdvancedWindow for GlutinWindow {
     fn get_title(&self) -> String { self.title.clone() }
     fn set_title(&mut self, value: String) {
         self.title = value;
