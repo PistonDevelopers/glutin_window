@@ -61,27 +61,42 @@ fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
-    pub fn new(settings: WindowSettings) -> Self {
+    pub fn new(settings: WindowSettings) -> Result<Self, String> {
+        use std::error::Error;
+        use glutin::ContextError;
+
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
         let window = builder_from_settings(&settings).build();
         let window = match window {
                 Ok(window) => window,
                 Err(_) => {
-                    builder_from_settings(&settings.samples(0)).build().unwrap()
+                    try!(builder_from_settings(&settings.samples(0)).build()
+                        .map_err(|e| String::from(e.description()))
+                    )
                 }
             };
-        unsafe { window.make_current().unwrap(); }
+        unsafe { try!(window.make_current().map_err(|e|
+                // This can be simplified in next version of Glutin.
+                match e {
+                    ContextError::IoError(ref err) => {
+                        String::from(err.description())
+                    }
+                    ContextError::ContextLost => {
+                        String::from("Context lost")
+                    }
+                }
+            )); }
 
         // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s));
 
-        GlutinWindow {
+        Ok(GlutinWindow {
             window: window,
             title: title,
             exit_on_esc: exit_on_esc,
             should_close: false,
-        }
+        })
     }
 
     fn poll_event(&mut self) -> Option<Input> {
@@ -134,12 +149,6 @@ impl GlutinWindow {
     }
 }
 
-impl From<WindowSettings> for GlutinWindow {
-    fn from(settings: WindowSettings) -> GlutinWindow {
-        GlutinWindow::new(settings)
-    }
-}
-
 impl Window for GlutinWindow {
     type Event = Input;
 
@@ -165,6 +174,10 @@ impl Window for GlutinWindow {
 }
 
 impl AdvancedWindow for GlutinWindow {
+    fn build_from_window_settings(settings: WindowSettings)
+    -> Result<Self, String> {
+        GlutinWindow::new(settings)
+    }
     fn get_title(&self) -> String { self.title.clone() }
     fn set_title(&mut self, value: String) {
         self.title = value;
