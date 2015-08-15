@@ -36,6 +36,8 @@ pub struct GlutinWindow {
     title: String,
     exit_on_esc: bool,
     should_close: bool,
+    has_cursor: bool,
+    cursor_pos: Option<[f64; 2]>,
 }
 
 fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -97,6 +99,8 @@ impl GlutinWindow {
             title: title,
             exit_on_esc: exit_on_esc,
             should_close: false,
+            has_cursor: true,
+            cursor_pos: None,
         })
     }
 
@@ -104,6 +108,11 @@ impl GlutinWindow {
         use glutin::Event as E;
         use glutin::MouseScrollDelta;
         use input::{ Key, Input, Motion };
+
+        if let Some(pos) = self.cursor_pos {
+            self.cursor_pos = None;
+            return Some(Input::Move(Motion::MouseCursor(pos[0], pos[1])));
+        }
 
         match self.window.poll_events().next() {
             None => None,
@@ -133,7 +142,17 @@ impl GlutinWindow {
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
             Some(E::MouseMoved((x, y))) => {
                 let f = self.window.hidpi_factor();
-                Some(Input::Move(Motion::MouseCursor(x as f64 / f as f64, y as f64 / f as f64)))
+                let x = x as f64 / f as f64;
+                let y = y as f64 / f as f64;
+                let size = self.size();
+                let cursor_inside = x >= 0.0 && x < size.width as f64 &&
+                                    y >= 0.0 && y < size.height as f64;
+                if cursor_inside != self.has_cursor {
+                    self.cursor_pos = Some([x, y]);
+                    self.has_cursor = cursor_inside;
+                    return Some(Input::Cursor(cursor_inside));
+                }
+                Some(Input::Move(Motion::MouseCursor(x, y)))
             }
             Some(E::MouseWheel(MouseScrollDelta::PixelDelta(x, y))) =>
                 Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
