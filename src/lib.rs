@@ -7,6 +7,7 @@ extern crate gl;
 extern crate input;
 extern crate window;
 extern crate shader_version;
+extern crate libc;
 
 // External crates.
 use input::{
@@ -92,7 +93,7 @@ impl GlutinWindow {
             )); }
 
         // Load the OpenGL function pointers.
-        gl::load_with(|s| window.get_proc_address(s));
+        gl::load_with(|s| window.get_proc_address(s) as *const libc::c_void);
 
         Ok(GlutinWindow {
             window: window,
@@ -220,7 +221,7 @@ impl AdvancedWindow for GlutinWindow {
 
 impl OpenGLWindow for GlutinWindow {
     fn get_proc_address(&mut self, proc_name: &str) -> ProcAddress {
-        self.window.get_proc_address(proc_name)
+        self.window.get_proc_address(proc_name) as *const libc::c_void
     }
 
     fn is_current(&self) -> bool {
