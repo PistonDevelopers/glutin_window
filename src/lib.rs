@@ -92,7 +92,7 @@ impl GlutinWindow {
             )); }
 
         // Load the OpenGL function pointers.
-        gl::load_with(|s| window.get_proc_address(s));
+        gl::load_with(|s| window.get_proc_address(s) as *const _);
 
         Ok(GlutinWindow {
             window: window,
@@ -220,7 +220,7 @@ impl AdvancedWindow for GlutinWindow {
 
 impl OpenGLWindow for GlutinWindow {
     fn get_proc_address(&mut self, proc_name: &str) -> ProcAddress {
-        self.window.get_proc_address(proc_name)
+        self.window.get_proc_address(proc_name) as *const _
     }
 
     fn is_current(&self) -> bool {
