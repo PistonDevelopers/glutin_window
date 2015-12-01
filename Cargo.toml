@@ -1,7 +1,7 @@
 [package]
 
 name = "pistoncore-glutin_window"
-version = "0.19.0"
+version = "0.20.0"
 authors = ["bvssvni <bvssvni@gmail.com>"]
 keywords = ["glutin", "window", "piston"]
 description = "A Piston window back-end using the Glutin library"
@@ -16,7 +16,7 @@ name = "glutin_window"
 path = "src/lib.rs"
 
 [dependencies]
-gl = "0.4.0"
+gl = "0.5.2"
 glutin = "0.4.2"
 pistoncore-input = "0.8.0"
 pistoncore-window = "0.14.0"
