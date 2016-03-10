@@ -38,6 +38,7 @@ pub struct GlutinWindow {
     should_close: bool,
     has_cursor: bool,
     cursor_pos: Option<[f64; 2]>,
+    event_overflow: Vec<Input>,
 }
 
 fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -102,6 +103,7 @@ impl GlutinWindow {
             should_close: false,
             has_cursor: true,
             cursor_pos: None,
+            event_overflow: Vec::new(),
         })
     }
 
@@ -109,11 +111,6 @@ impl GlutinWindow {
         use glutin::Event as E;
         use glutin::MouseScrollDelta;
         use input::{ Key, Input, Motion };
-
-        if let Some(pos) = self.cursor_pos {
-            self.cursor_pos = None;
-            return Some(Input::Move(Motion::MouseCursor(pos[0], pos[1])));
-        }
 
         match self.window.poll_events().next() {
             None => None,
@@ -145,13 +142,17 @@ impl GlutinWindow {
                 let f = self.window.hidpi_factor();
                 let x = x as f64 / f as f64;
                 let y = y as f64 / f as f64;
+                if let Some(pos) = self.cursor_pos {
+                    let (dx, dy) = (x - pos[0], y - pos[1]);
+                    self.event_overflow.push(Input::Move(Motion::MouseRelative(dx, dy)));
+                }
                 let size = self.size();
                 let cursor_inside = x >= 0.0 && x < size.width as f64 &&
                                     y >= 0.0 && y < size.height as f64;
                 if cursor_inside != self.has_cursor {
                     self.cursor_pos = Some([x, y]);
                     self.has_cursor = cursor_inside;
-                    return Some(Input::Cursor(cursor_inside));
+                    self.event_overflow.push(Input::Cursor(cursor_inside));
                 }
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
@@ -193,7 +194,13 @@ impl Window for GlutinWindow {
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
     fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
-    fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
+    fn poll_event(&mut self) -> Option<Input> { 
+        if !self.event_overflow.is_empty() {
+            self.event_overflow.pop()
+        } else {
+            self.poll_event()
+        }
+    }
 }
 
 impl BuildFromWindowSettings for GlutinWindow {
