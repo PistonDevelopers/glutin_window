@@ -155,9 +155,9 @@ impl GlutinWindow {
                 }
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
-            Some(E::MouseWheel(MouseScrollDelta::PixelDelta(x, y))) =>
+            Some(E::MouseWheel(MouseScrollDelta::PixelDelta(x, y), _)) =>
                 Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
-            Some(E::MouseWheel(MouseScrollDelta::LineDelta(x, y))) =>
+            Some(E::MouseWheel(MouseScrollDelta::LineDelta(x, y), _)) =>
                 Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
                 Some(Input::Press(Button::Mouse(map_mouse(button)))),
