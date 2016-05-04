@@ -46,6 +46,7 @@ fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
     let size = settings.get_size();
     let mut builder = glutin::WindowBuilder::new()
         .with_dimensions(size.width, size.height)
+        .with_multitouch()
         .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
         .with_title(settings.get_title())
         .with_srgb(Some(settings.get_srgb()));
@@ -141,6 +142,19 @@ impl GlutinWindow {
             },
             Some(E::KeyboardInput(glutin::ElementState::Released, _, Some(key))) =>
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
+            Some(E::Touch(glutin::Touch { phase, location, id })) => {
+                use glutin::TouchPhase;
+                use input::{Touch, TouchArgs};
+
+                Some(Input::Move(Motion::Touch(TouchArgs::new(
+                    0, id as i64, [location.0, location.1], 1.0, match phase {
+                        TouchPhase::Started => Touch::Start,
+                        TouchPhase::Moved => Touch::Move,
+                        TouchPhase::Ended => Touch::End,
+                        TouchPhase::Cancelled => Touch::Cancel
+                    }
+                ))))
+            }
             Some(E::MouseMoved(x, y)) => {
                 let f = self.window.hidpi_factor();
                 let x = x as f64 / f as f64;
