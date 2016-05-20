@@ -36,7 +36,16 @@ pub struct GlutinWindow {
     title: String,
     exit_on_esc: bool,
     should_close: bool,
+    // Used to detect enter/leave cursor events.
     has_cursor: bool,
+    // Used to fake capturing of cursor,
+    // to get relative mouse events.
+    is_capturing_cursor: bool,
+    // Stores the last known cursor position.
+    last_cursor_pos: Option<[i32; 2]>,
+    // Stores relative coordinates to emit on next poll.
+    mouse_relative: Option<(f64, f64)>,
+    // Used to emit cursor event after enter/leave.
     cursor_pos: Option<[f64; 2]>,
 }
 
@@ -103,6 +112,9 @@ impl GlutinWindow {
             should_close: false,
             has_cursor: true,
             cursor_pos: None,
+            is_capturing_cursor: false,
+            last_cursor_pos: None,
+            mouse_relative: None,
         })
     }
 
@@ -111,13 +123,37 @@ impl GlutinWindow {
         use glutin::MouseScrollDelta;
         use input::{ Key, Input, Motion };
 
+        // Check for a pending mouse cursor move event.
         if let Some(pos) = self.cursor_pos {
             self.cursor_pos = None;
             return Some(Input::Move(Motion::MouseCursor(pos[0], pos[1])));
         }
 
-        match self.window.poll_events().next() {
-            None => None,
+        // Check for a pending relative mouse move event.
+        if let Some((x, y)) = self.mouse_relative {
+            self.mouse_relative = None;
+            return Some(Input::Move(Motion::MouseRelative(x, y)));
+        }
+
+        let mut ev = self.window.poll_events().next();
+
+        if self.is_capturing_cursor &&
+           self.last_cursor_pos.is_none() {
+            if let Some(E::MouseMoved(x, y)) = ev {
+                // Ignore this event since mouse positions
+                // should not be emitted when capturing cursor.
+                self.last_cursor_pos = Some([x, y]);
+                ev = self.window.poll_events().next();
+            }
+        }
+
+        match ev {
+            None => {
+                if self.is_capturing_cursor {
+                    self.fake_capture();
+                }
+                None
+            }
             Some(E::Resized(w, h)) =>
                 Some(Input::Resize(w, h)),
             Some(E::ReceivedCharacter(ch)) => {
@@ -156,6 +192,20 @@ impl GlutinWindow {
                 ))))
             }
             Some(E::MouseMoved(x, y)) => {
+                if let Some(pos) = self.last_cursor_pos {
+                    let dx = x - pos[0];
+                    let dy = y - pos[1];
+                    if self.is_capturing_cursor {
+                        self.last_cursor_pos = Some([x, y]);
+                        self.fake_capture();
+                        // Skip normal mouse movement and emit relative motion only.
+                        return Some(Input::Move(Motion::MouseRelative(dx as f64, dy as f64)));
+                    }
+                    // Send relative mouse movement next time.
+                    self.mouse_relative = Some((dx as f64, dy as f64));
+                }
+
+                self.last_cursor_pos = Some([x, y]);
                 let f = self.window.hidpi_factor();
                 let x = x as f64 / f as f64;
                 let y = y as f64 / f as f64;
@@ -182,6 +232,22 @@ impl GlutinWindow {
                 self.poll_event()
             }
             _ => None,
+        }
+    }
+
+    fn fake_capture(&mut self) {
+        if let Some(pos) = self.last_cursor_pos {
+            // Fake capturing of cursor.
+            let size = self.size();
+            let cx = (size.width / 2) as i32;
+            let cy = (size.height / 2) as i32;
+            let dx = cx - pos[0];
+            let dy = cy - pos[1];
+            if dx != 0 || dy != 0 {
+                if let Ok(_) = self.window.set_cursor_position(cx as i32, cy as i32) {
+                    self.last_cursor_pos = Some([cx, cy]);
+                }
+            }
         }
     }
 }
@@ -227,10 +293,19 @@ impl AdvancedWindow for GlutinWindow {
     fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
     fn set_capture_cursor(&mut self, value: bool) {
         use glutin::CursorState;
+
+        // Normally we would call `.set_cursor_state(CursorState::Grab)`
+        // but since relative mouse events does not work,
+        // the capturing of cursor is faked by hiding the cursor
+        // and setting the position to the center of window.
+        self.is_capturing_cursor = value;
         if value {
-            let _ = self.window.set_cursor_state(CursorState::Grab);
+            let _ = self.window.set_cursor_state(CursorState::Hide);
         } else {
             let _ = self.window.set_cursor_state(CursorState::Normal);
+        }
+        if value {
+            self.fake_capture();
         }
     }
 }
