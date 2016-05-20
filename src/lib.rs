@@ -197,6 +197,7 @@ impl GlutinWindow {
                     let dy = y - pos[1];
                     if self.is_capturing_cursor {
                         self.last_cursor_pos = Some([x, y]);
+                        self.fake_capture();
                         // Skip normal mouse movement and emit relative motion only.
                         return Some(Input::Move(Motion::MouseRelative(dx as f64, dy as f64)));
                     }
