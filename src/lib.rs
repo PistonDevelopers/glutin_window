@@ -230,7 +230,7 @@ impl GlutinWindow {
             let cy = (size.height / 2) as i32;
             let dx = cx - pos[0];
             let dy = cy - pos[1];
-            if dx != 0 && dy != 0 {
+            if dx != 0 || dy != 0 {
                 // self.ignore_relative_event = Some((dx, dy));
                 if let Ok(_) = self.window.set_cursor_position(cx as i32, cy as i32) {
                     self.last_cursor_pos = Some([cx, cy]);
