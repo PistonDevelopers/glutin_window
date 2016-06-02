@@ -23,6 +23,7 @@ use window::{
     ProcAddress,
     WindowSettings,
     Size,
+    Position,
 };
 use glutin::{ Api, GlRequest };
 
@@ -55,6 +56,7 @@ fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
     let size = settings.get_size();
     let mut builder = glutin::WindowBuilder::new()
         .with_dimensions(size.width, size.height)
+        .with_decorations(settings.get_decorated())
         .with_multitouch()
         .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
         .with_title(settings.get_title())
@@ -75,7 +77,7 @@ fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
-    pub fn new(settings: WindowSettings) -> Result<Self, String> {
+    pub fn new(settings: &WindowSettings) -> Result<Self, String> {
         use std::error::Error;
         use glutin::ContextError;
 
@@ -85,7 +87,7 @@ impl GlutinWindow {
         let window = match window {
                 Ok(window) => window,
                 Err(_) => {
-                    try!(builder_from_settings(&settings.samples(0)).build()
+                    try!(builder_from_settings(&settings.clone().samples(0)).build()
                         .map_err(|e| String::from(e.description()))
                     )
                 }
@@ -277,7 +279,7 @@ impl Window for GlutinWindow {
 }
 
 impl BuildFromWindowSettings for GlutinWindow {
-    fn build_from_window_settings(settings: WindowSettings)
+    fn build_from_window_settings(settings: &WindowSettings)
     -> Result<Self, String> {
         GlutinWindow::new(settings)
     }
@@ -307,6 +309,16 @@ impl AdvancedWindow for GlutinWindow {
         if value {
             self.fake_capture();
         }
+    }
+    fn show(&mut self) { self.window.show(); }
+    fn hide(&mut self) { self.window.hide(); }
+    fn get_position(&self) -> Option<Position> {
+        self.window.get_position().map(|(x, y)|
+            Position { x: x, y: y })
+    }
+    fn set_position<P: Into<Position>>(&mut self, pos: P) {
+        let pos: Position = pos.into();
+        self.window.set_position(pos.x, pos.y);
     }
 }
 
