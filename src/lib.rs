@@ -120,11 +120,21 @@ impl GlutinWindow {
         })
     }
 
+    /// Wait for an event to be received by the window.
+    /// Blocks the current thread until one arrives.
+    pub fn wait_event(&mut self) -> Option<Input> {
+        // First check for and handle any pending events.
+        if let Some(event) = self.poll_event() {
+            Some(event)
+        } else {
+            let event = self.window.wait_events().next();
+            self.handle_event(event)
+        }
+    }
+
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
-        use glutin::MouseScrollDelta;
-        use input::{ Key, Input, Motion };
-
+        use input::{ Input, Motion };
         // Check for a pending mouse cursor move event.
         if let Some(pos) = self.cursor_pos {
             self.cursor_pos = None;
@@ -148,6 +158,15 @@ impl GlutinWindow {
                 ev = self.window.poll_events().next();
             }
         }
+        self.handle_event(ev)
+    }
+
+    /// Convert an incoming Glutin event to Piston input.
+    /// Update cursor state if necessary.
+    fn handle_event(&mut self, ev: Option<glutin::Event>) -> Option<Input> {
+        use glutin::Event as E;
+        use glutin::MouseScrollDelta;
+        use input::{ Key, Input, Motion };
 
         match ev {
             None => {
