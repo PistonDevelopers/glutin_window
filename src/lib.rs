@@ -26,6 +26,8 @@ use window::{
     Position,
 };
 use glutin::{ Api, GlRequest };
+use std::time::Duration;
+use std::thread;
 
 pub use shader_version::OpenGL;
 
@@ -120,16 +122,32 @@ impl GlutinWindow {
         })
     }
 
-    /// Wait for an event to be received by the window.
-    /// Blocks the current thread until one arrives.
-    pub fn wait_event(&mut self) -> Option<Input> {
+    fn wait_event(&mut self) -> Input {
         // First check for and handle any pending events.
         if let Some(event) = self.poll_event() {
-            Some(event)
-        } else {
-            let event = self.window.wait_events().next();
-            self.handle_event(event)
+            return event;
         }
+        loop {
+            let event = self.window.wait_events().next();
+            if let Some(event) = self.handle_event(event) {
+                return event;
+            }
+        }
+    }
+
+    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Input> {
+        // First check for and handle any pending events.
+        if let Some(event) = self.poll_event() {
+            return Some(event);
+        }
+        // schedule wake up from `wait_event`
+        let window_proxy = self.window.create_window_proxy();
+        thread::spawn(move || {
+            thread::sleep(timeout);
+            window_proxy.wakeup_event_loop();
+        });
+        let event = self.window.wait_events().next();
+        self.handle_event(event)
     }
 
     fn poll_event(&mut self) -> Option<Input> {
@@ -294,6 +312,8 @@ impl Window for GlutinWindow {
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
     fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
+    fn wait_event(&mut self) -> Input { self.wait_event() }
+    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Input> { self.wait_event_timeout(timeout) }
     fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
 }
 
