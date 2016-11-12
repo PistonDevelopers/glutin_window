@@ -50,6 +50,10 @@ pub struct GlutinWindow {
     mouse_relative: Option<(f64, f64)>,
     // Used to emit cursor event after enter/leave.
     cursor_pos: Option<[f64; 2]>,
+    // Track the dimensions of the last `Resize` event that was emitted. Used for checking whether
+    // or not we need to generate our own `Resize` events on systems that winit cannot generate
+    // resize events for.
+    last_resize_emitted_pixels: (u32, u32),
 }
 
 fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -109,6 +113,8 @@ impl GlutinWindow {
         // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s) as *const _);
 
+        let initial_dimensions = window.get_inner_size_pixels().unwrap_or((0, 0));
+
         Ok(GlutinWindow {
             window: window,
             title: title,
@@ -119,6 +125,7 @@ impl GlutinWindow {
             is_capturing_cursor: false,
             last_cursor_pos: None,
             mouse_relative: None,
+            last_resize_emitted_pixels: initial_dimensions,
         })
     }
 
@@ -128,6 +135,9 @@ impl GlutinWindow {
             return event;
         }
         loop {
+            if let Some(event) = self.check_for_new_resize_event() {
+                return event;
+            }
             let event = self.window.wait_events().next();
             if let Some(event) = self.handle_event(event) {
                 return event;
@@ -150,9 +160,41 @@ impl GlutinWindow {
         self.handle_event(event)
     }
 
+    // Currently (12 Nov 2016) winit is unable to generate `Resize` events for Mac OS and possibly
+    // other OSs, and shows no sign of producing a fix for this any time soon.
+    //
+    // Here, we get around this by keeping track of the last resize event that was emitted. Each
+    // time a new event is requested, we can first compare the current `glutin::Window` size to the
+    // last size emitted by a resize event. If the sizes do not match, we must generate our own
+    // `Resize` event. Using this approach, we ensure that Mac OS users receive `Resize` events
+    // while avoiding the creation of event doubles on OSs that already receive `Resize` events.
+    fn resize_event_if_changed(&mut self, w: u32, h: u32) -> Option<Input> {
+        let (last_w, last_h) = self.last_resize_emitted_pixels;
+        if w != last_w || h != last_h {
+            self.last_resize_emitted_pixels = (w, h);
+            let dpi_factor = self.window.hidpi_factor();
+            let w = (w as f32 / dpi_factor) as u32;
+            let h = (h as f32 / dpi_factor) as u32;
+            Some(Input::Resize(w, h))
+        } else {
+            None
+        }
+    }
+
+    // Check to see whether or not we need to generate a new `Resize` event.
+    fn check_for_new_resize_event(&mut self) -> Option<Input> {
+        if let Some((w, h)) = self.window.get_inner_size_pixels() {
+            if let Some(e) = self.resize_event_if_changed(w, h) {
+                return Some(e);
+            }
+        }
+        None
+    }
+
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
         use input::{ Input, Motion };
+
         // Check for a pending mouse cursor move event.
         if let Some(pos) = self.cursor_pos {
             self.cursor_pos = None;
@@ -163,6 +205,11 @@ impl GlutinWindow {
         if let Some((x, y)) = self.mouse_relative {
             self.mouse_relative = None;
             return Some(Input::Move(Motion::MouseRelative(x, y)));
+        }
+
+        // Check to see whether or not we need to generate a `Resize` event.
+        if let Some(event) = self.check_for_new_resize_event() {
+            return Some(event);
         }
 
         let mut ev = self.window.poll_events().next();
@@ -194,7 +241,7 @@ impl GlutinWindow {
                 None
             }
             Some(E::Resized(w, h)) =>
-                Some(Input::Resize(w, h)),
+                self.resize_event_if_changed(w, h),
             Some(E::ReceivedCharacter(ch)) => {
                 let string = match ch {
                     // Ignore control characters and return ascii for Text event (like sdl2).
@@ -295,19 +342,10 @@ impl Window for GlutinWindow {
     type Event = Input;
 
     fn size(&self) -> Size {
-        if let Some(size) = self.window.get_inner_size() {
-            size.into()
-        } else {
-            (0, 0).into()
-        }
+        self.window.get_inner_size().unwrap_or((0, 0)).into()
     }
     fn draw_size(&self) -> Size {
-        let f = self.window.hidpi_factor();
-        if let Some((w, h)) = self.window.get_inner_size() {
-            ((w as f32 * f) as u32, (h as f32 * f) as u32).into()
-        } else {
-            (0, 0).into()
-        }
+        self.window.get_inner_size_pixels().unwrap_or((0, 0)).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
