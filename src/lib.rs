@@ -315,7 +315,7 @@ impl GlutinWindow {
                 Some(Input::Release(Button::Mouse(map_mouse(button)))),
             Some(E::Closed) => {
                 self.should_close = true;
-                self.poll_event()
+                Some(Input::Close)
             }
             _ => None,
         }
