@@ -11,6 +11,7 @@ extern crate shader_version;
 // External crates.
 use input::{
     keyboard,
+    CloseArgs,
     MouseButton,
     Button,
     Input,
@@ -273,7 +274,7 @@ impl GlutinWindow {
                 Some(Input::Release(Button::Mouse(map_mouse(button)))),
             Some(E::Closed) => {
                 self.should_close = true;
-                Some(Input::Close)
+                Some(Input::Close(CloseArgs))
             }
             _ => None,
         }
@@ -297,8 +298,6 @@ impl GlutinWindow {
 }
 
 impl Window for GlutinWindow {
-    type Event = Input;
-
     fn size(&self) -> Size {
         self.window.get_inner_size().unwrap_or((0, 0)).into()
     }
