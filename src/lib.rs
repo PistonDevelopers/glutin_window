@@ -91,7 +91,7 @@ impl GlutinWindow {
                 Ok(window) => window,
                 Err(_) => {
                     try!(builder_from_settings(&settings.clone().samples(0)).build()
-                        .map_err(|e| String::from(e.description()))
+                        .map_err(|e| format!("{}", e))
                     )
                 }
             };
