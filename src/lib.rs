@@ -9,6 +9,7 @@ extern crate window;
 extern crate shader_version;
 
 use std::sync::Arc;
+use std::collections::VecDeque;
 
 // External crates.
 use input::{
@@ -56,7 +57,7 @@ pub struct GlutinWindow {
     // Polls events from window.
     events_loop: Arc<glutin::EventsLoop>,
     // Stores list of events ready for processing.
-    events: Vec<glutin::Event>,
+    events: VecDeque<glutin::Event>,
 }
 
 fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -128,7 +129,7 @@ impl GlutinWindow {
             last_cursor_pos: None,
             mouse_relative: None,
             events_loop: Arc::new(events_loop),
-            events: vec![],
+            events: VecDeque::new(),
         })
     }
 
@@ -142,11 +143,11 @@ impl GlutinWindow {
                 let ref mut events = self.events;
                 let ref events_loop = self.events_loop;
                 events_loop.run_forever(|ev| {
-                    events.push(ev);
+                    events.push_back(ev);
                     events_loop.interrupt()
                 });
             }
-            let event = self.events.pop();
+            let event = self.events.pop_front();
             if let Some(event) = self.handle_event(event) {
                 return event;
             }
@@ -168,11 +169,11 @@ impl GlutinWindow {
             let ref mut events = self.events;
             let ref events_loop = self.events_loop;
             events_loop.run_forever(|ev| {
-                events.push(ev);
+                events.push_back(ev);
                 events_loop.interrupt()
             });
         }
-        let event = self.events.pop();
+        let event = self.events.pop_front();
         if let Some(event) = self.handle_event(event) {
             Some(event)
         } else {
@@ -199,9 +200,9 @@ impl GlutinWindow {
 
         if self.events.len() == 0 {
             let ref mut events = self.events;
-            self.events_loop.poll_events(|ev| events.push(ev));
+            self.events_loop.poll_events(|ev| events.push_back(ev));
         }
-        let mut ev = self.events.pop();
+        let mut ev = self.events.pop_front();
         if self.is_capturing_cursor &&
            self.last_cursor_pos.is_none() {
             if let Some(E::WindowEvent {
@@ -213,9 +214,9 @@ impl GlutinWindow {
 
                 if self.events.len() == 0 {
                     let ref mut events = self.events;
-                    self.events_loop.poll_events(|ev| events.push(ev));
+                    self.events_loop.poll_events(|ev| events.push_back(ev));
                 }
-                ev = self.events.pop();
+                ev = self.events.pop_front();
             }
         }
         self.handle_event(ev)
