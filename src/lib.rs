@@ -8,6 +8,9 @@ extern crate input;
 extern crate window;
 extern crate shader_version;
 
+use std::sync::Arc;
+use std::collections::VecDeque;
+
 // External crates.
 use input::{
     keyboard,
@@ -51,6 +54,10 @@ pub struct GlutinWindow {
     mouse_relative: Option<(f64, f64)>,
     // Used to emit cursor event after enter/leave.
     cursor_pos: Option<[f64; 2]>,
+    // Polls events from window.
+    events_loop: Arc<glutin::EventsLoop>,
+    // Stores list of events ready for processing.
+    events: VecDeque<glutin::Event>,
 }
 
 fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -84,13 +91,14 @@ impl GlutinWindow {
         use std::error::Error;
         use glutin::ContextError;
 
+        let events_loop = glutin::EventsLoop::new();
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
-        let window = builder_from_settings(&settings).build();
+        let window = builder_from_settings(&settings).build(&events_loop);
         let window = match window {
                 Ok(window) => window,
                 Err(_) => {
-                    try!(builder_from_settings(&settings.clone().samples(0)).build()
+                    try!(builder_from_settings(&settings.clone().samples(0)).build(&events_loop)
                         .map_err(|e| format!("{}", e))
                     )
                 }
@@ -120,6 +128,8 @@ impl GlutinWindow {
             is_capturing_cursor: false,
             last_cursor_pos: None,
             mouse_relative: None,
+            events_loop: Arc::new(events_loop),
+            events: VecDeque::new(),
         })
     }
 
@@ -129,7 +139,15 @@ impl GlutinWindow {
             return event;
         }
         loop {
-            let event = self.window.wait_events().next();
+            {
+                let ref mut events = self.events;
+                let ref events_loop = self.events_loop;
+                events_loop.run_forever(|ev| {
+                    events.push_back(ev);
+                    events_loop.interrupt()
+                });
+            }
+            let event = self.events.pop_front();
             if let Some(event) = self.handle_event(event) {
                 return event;
             }
@@ -141,18 +159,31 @@ impl GlutinWindow {
         if let Some(event) = self.poll_event() {
             return Some(event);
         }
-        // schedule wake up from `wait_event`
-        let window_proxy = self.window.create_window_proxy();
+        let events_loop = self.events_loop.clone();
+        // schedule wake up when time is out.
         thread::spawn(move || {
             thread::sleep(timeout);
-            window_proxy.wakeup_event_loop();
+            events_loop.interrupt();
         });
-        let event = self.window.wait_events().next();
-        self.handle_event(event)
+        {
+            let ref mut events = self.events;
+            let ref events_loop = self.events_loop;
+            events_loop.run_forever(|ev| {
+                events.push_back(ev);
+                events_loop.interrupt()
+            });
+        }
+        let event = self.events.pop_front();
+        if let Some(event) = self.handle_event(event) {
+            Some(event)
+        } else {
+            None
+        }
     }
 
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
+        use glutin::WindowEvent as WE;
         use input::{ Input, Motion };
 
         // Check for a pending mouse cursor move event.
@@ -167,15 +198,25 @@ impl GlutinWindow {
             return Some(Input::Move(Motion::MouseRelative(x, y)));
         }
 
-        let mut ev = self.window.poll_events().next();
-
+        if self.events.len() == 0 {
+            let ref mut events = self.events;
+            self.events_loop.poll_events(|ev| events.push_back(ev));
+        }
+        let mut ev = self.events.pop_front();
         if self.is_capturing_cursor &&
            self.last_cursor_pos.is_none() {
-            if let Some(E::MouseMoved(x, y)) = ev {
+            if let Some(E::WindowEvent {
+                event: WE::MouseMoved(x, y), ..
+            }) = ev {
                 // Ignore this event since mouse positions
                 // should not be emitted when capturing cursor.
                 self.last_cursor_pos = Some([x, y]);
-                ev = self.window.poll_events().next();
+
+                if self.events.len() == 0 {
+                    let ref mut events = self.events;
+                    self.events_loop.poll_events(|ev| events.push_back(ev));
+                }
+                ev = self.events.pop_front();
             }
         }
         self.handle_event(ev)
@@ -185,6 +226,7 @@ impl GlutinWindow {
     /// Update cursor state if necessary.
     fn handle_event(&mut self, ev: Option<glutin::Event>) -> Option<Input> {
         use glutin::Event as E;
+        use glutin::WindowEvent as WE;
         use glutin::MouseScrollDelta;
         use input::{ Key, Input, Motion };
 
@@ -195,13 +237,17 @@ impl GlutinWindow {
                 }
                 None
             }
-            Some(E::Resized(w, h)) => {
+            Some(E::WindowEvent {
+                event: WE::Resized(w, h), ..
+            }) => {
                 let dpi_factor = self.window.hidpi_factor();
                 let w = (w as f32 / dpi_factor) as u32;
                 let h = (h as f32 / dpi_factor) as u32;
                 Some(Input::Resize(w, h))
             },
-            Some(E::ReceivedCharacter(ch)) => {
+            Some(E::WindowEvent {
+                event: WE::ReceivedCharacter(ch), ..
+            }) => {
                 let string = match ch {
                     // Ignore control characters and return ascii for Text event (like sdl2).
                     '\u{7f}' | // Delete
@@ -212,18 +258,26 @@ impl GlutinWindow {
                 };
                 Some(Input::Text(string))
             },
-            Some(E::Focused(focused)) =>
+            Some(E::WindowEvent {
+                event: WE::Focused(focused), ..
+            }) =>
                 Some(Input::Focus(focused)),
-            Some(E::KeyboardInput(glutin::ElementState::Pressed, _, Some(key))) => {
+            Some(E::WindowEvent {
+                event: WE::KeyboardInput(glutin::ElementState::Pressed, _, Some(key), _), ..
+            }) => {
                 let piston_key = map_key(key);
                 if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
                     self.should_close = true;
                 }
                 Some(Input::Press(Button::Keyboard(piston_key)))
             },
-            Some(E::KeyboardInput(glutin::ElementState::Released, _, Some(key))) =>
+            Some(E::WindowEvent {
+                event: WE::KeyboardInput(glutin::ElementState::Released, _, Some(key), _), ..
+            }) =>
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
-            Some(E::Touch(glutin::Touch { phase, location, id })) => {
+            Some(E::WindowEvent {
+                event: WE::Touch(glutin::Touch { phase, location, id }), ..
+            }) => {
                 use glutin::TouchPhase;
                 use input::{Touch, TouchArgs};
 
@@ -236,7 +290,9 @@ impl GlutinWindow {
                     }
                 ))))
             }
-            Some(E::MouseMoved(x, y)) => {
+            Some(E::WindowEvent {
+                event: WE::MouseMoved(x, y), ..
+            }) => {
                 if let Some(pos) = self.last_cursor_pos {
                     let dx = x - pos[0];
                     let dy = y - pos[1];
@@ -264,15 +320,19 @@ impl GlutinWindow {
                 }
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
-            Some(E::MouseWheel(MouseScrollDelta::PixelDelta(x, y), _)) =>
-                Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
-            Some(E::MouseWheel(MouseScrollDelta::LineDelta(x, y), _)) =>
-                Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
-            Some(E::MouseInput(glutin::ElementState::Pressed, button)) =>
-                Some(Input::Press(Button::Mouse(map_mouse(button)))),
-            Some(E::MouseInput(glutin::ElementState::Released, button)) =>
-                Some(Input::Release(Button::Mouse(map_mouse(button)))),
-            Some(E::Closed) => {
+            Some(E::WindowEvent {
+                event: WE::MouseWheel(MouseScrollDelta::PixelDelta(x, y), _), ..
+            }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
+            Some(E::WindowEvent {
+                event: WE::MouseWheel(MouseScrollDelta::LineDelta(x, y), _), ..
+            }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
+            Some(E::WindowEvent {
+                event: WE::MouseInput(glutin::ElementState::Pressed, button), ..
+            }) => Some(Input::Press(Button::Mouse(map_mouse(button)))),
+            Some(E::WindowEvent {
+                event: WE::MouseInput(glutin::ElementState::Released, button), ..
+            }) => Some(Input::Release(Button::Mouse(map_mouse(button)))),
+            Some(E::WindowEvent { event: WE::Closed, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
