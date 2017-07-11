@@ -50,7 +50,7 @@ pub struct GlutinWindow {
     // to get relative mouse events.
     is_capturing_cursor: bool,
     // Stores the last known cursor position.
-    last_cursor_pos: Option<[i32; 2]>,
+    last_cursor_pos: Option<[f64; 2]>,
     // Stores relative coordinates to emit on next poll.
     mouse_relative: Option<(f64, f64)>,
     // Used to emit cursor event after enter/leave.
@@ -221,8 +221,7 @@ impl GlutinWindow {
             }) = ev {
                 // Ignore this event since mouse positions
                 // should not be emitted when capturing cursor.
-                // FIXME: incoming cursor positions are f64
-                self.last_cursor_pos = Some([x as i32, y as i32]);
+                self.last_cursor_pos = Some([x, y]);
 
                 if self.events.len() == 0 {
                     let ref mut events = self.events;
@@ -316,10 +315,10 @@ impl GlutinWindow {
                 event: WE::MouseMoved{position: (x, y), ..}, ..
             }) => {
                 if let Some(pos) = self.last_cursor_pos {
-                    let dx = (x as i32) - pos[0];
-                    let dy = (y as i32) - pos[1];
+                    let dx = x - pos[0];
+                    let dy = y - pos[1];
                     if self.is_capturing_cursor {
-                        self.last_cursor_pos = Some([x as i32, y as i32]);
+                        self.last_cursor_pos = Some([x, y]);
                         self.fake_capture();
                         // Skip normal mouse movement and emit relative motion only.
                         return Some(Input::Move(Motion::MouseRelative(dx as f64, dy as f64)));
@@ -328,7 +327,7 @@ impl GlutinWindow {
                     self.mouse_relative = Some((dx as f64, dy as f64));
                 }
 
-                self.last_cursor_pos = Some([x as i32, y as i32]);
+                self.last_cursor_pos = Some([x, y]);
                 let f = self.window.hidpi_factor();
                 let x = x as f64 / f as f64;
                 let y = y as f64 / f as f64;
@@ -366,11 +365,11 @@ impl GlutinWindow {
         if let Some(pos) = self.last_cursor_pos {
             // Fake capturing of cursor.
             let size = self.size();
-            let cx = (size.width / 2) as i32;
-            let cy = (size.height / 2) as i32;
+            let cx = (size.width / 2) as f64;
+            let cy = (size.height / 2) as f64;
             let dx = cx - pos[0];
             let dy = cy - pos[1];
-            if dx != 0 || dy != 0 {
+            if dx != 0.0 || dy != 0.0 {
                 if let Ok(_) = self.window.set_cursor_position(cx as i32, cy as i32) {
                     self.last_cursor_pos = Some([cx, cy]);
                 }
