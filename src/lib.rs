@@ -8,7 +8,8 @@ extern crate input;
 extern crate window;
 extern crate shader_version;
 
-use std::sync::Arc;
+use glutin::GlContext;
+
 use std::collections::VecDeque;
 
 // External crates.
@@ -38,7 +39,7 @@ pub use shader_version::OpenGL;
 /// Contains stuff for game window.
 pub struct GlutinWindow {
     /// The window.
-    pub window: glutin::Window,
+    pub window: glutin::GlWindow,
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
@@ -55,34 +56,38 @@ pub struct GlutinWindow {
     // Used to emit cursor event after enter/leave.
     cursor_pos: Option<[f64; 2]>,
     // Polls events from window.
-    events_loop: Arc<glutin::EventsLoop>,
+    events_loop: glutin::EventsLoop,
     // Stores list of events ready for processing.
     events: VecDeque<glutin::Event>,
 }
 
-fn builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
-    let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
-    let (major, minor) = opengl.get_major_minor();
+fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
     let size = settings.get_size();
     let mut builder = glutin::WindowBuilder::new()
         .with_dimensions(size.width, size.height)
         .with_decorations(settings.get_decorated())
         .with_multitouch()
-        .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
-        .with_title(settings.get_title())
-        .with_srgb(Some(settings.get_srgb()));
-    let samples = settings.get_samples();
+        .with_title(settings.get_title());
     if settings.get_fullscreen() {
         builder = builder.with_fullscreen(glutin::get_primary_monitor());
     }
+    builder
+}
+
+fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBuilder {
+    let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
+    let (major, minor) = opengl.get_major_minor();
+    let mut builder = glutin::ContextBuilder::new()
+        .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
+        .with_srgb(settings.get_srgb());
+    let samples = settings.get_samples();
     if settings.get_vsync() {
-        builder = builder.with_vsync();
+        builder = builder.with_vsync(true);
     }
     if samples != 0 {
         builder = builder.with_multisampling(samples as u16);
     }
-    builder
-}
+    builder}
 
 impl GlutinWindow {
 
@@ -94,12 +99,20 @@ impl GlutinWindow {
         let events_loop = glutin::EventsLoop::new();
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
-        let window = builder_from_settings(&settings).build(&events_loop);
+        let window = glutin::GlWindow::new(
+            window_builder_from_settings(&settings),
+            context_builder_from_settings(&settings),
+            &events_loop
+        );
         let window = match window {
                 Ok(window) => window,
                 Err(_) => {
-                    try!(builder_from_settings(&settings.clone().samples(0)).build(&events_loop)
-                        .map_err(|e| format!("{}", e))
+                    try!(
+                        glutin::GlWindow::new(
+                            window_builder_from_settings(&settings),
+                            context_builder_from_settings(&settings.clone().samples(0)),
+                            &events_loop
+                        ).map_err(|e| format!("{}", e))
                     )
                 }
             };
@@ -128,7 +141,7 @@ impl GlutinWindow {
             is_capturing_cursor: false,
             last_cursor_pos: None,
             mouse_relative: None,
-            events_loop: Arc::new(events_loop),
+            events_loop: events_loop,
             events: VecDeque::new(),
         })
     }
@@ -141,10 +154,9 @@ impl GlutinWindow {
         loop {
             {
                 let ref mut events = self.events;
-                let ref events_loop = self.events_loop;
-                events_loop.run_forever(|ev| {
+                self.events_loop.run_forever(|ev| {
                     events.push_back(ev);
-                    events_loop.interrupt()
+                    glutin::ControlFlow::Break
                 });
             }
             let event = self.events.pop_front();
@@ -159,18 +171,17 @@ impl GlutinWindow {
         if let Some(event) = self.poll_event() {
             return Some(event);
         }
-        let events_loop = self.events_loop.clone();
         // schedule wake up when time is out.
+        let events_loop_proxy = self.events_loop.create_proxy();
         thread::spawn(move || {
             thread::sleep(timeout);
-            events_loop.interrupt();
+            events_loop_proxy.wakeup().ok(); // wakeup can fail only if the event loop went away
         });
         {
             let ref mut events = self.events;
-            let ref events_loop = self.events_loop;
-            events_loop.run_forever(|ev| {
+            self.events_loop.run_forever(|ev| {
                 events.push_back(ev);
-                events_loop.interrupt()
+                glutin::ControlFlow::Break
             });
         }
         let event = self.events.pop_front();
@@ -206,11 +217,12 @@ impl GlutinWindow {
         if self.is_capturing_cursor &&
            self.last_cursor_pos.is_none() {
             if let Some(E::WindowEvent {
-                event: WE::MouseMoved(x, y), ..
+                event: WE::MouseMoved{ position: (x, y), ..}, ..
             }) = ev {
                 // Ignore this event since mouse positions
                 // should not be emitted when capturing cursor.
-                self.last_cursor_pos = Some([x, y]);
+                // FIXME: incoming cursor positions are f64
+                self.last_cursor_pos = Some([x as i32, y as i32]);
 
                 if self.events.len() == 0 {
                     let ref mut events = self.events;
@@ -263,7 +275,12 @@ impl GlutinWindow {
             }) =>
                 Some(Input::Focus(focused)),
             Some(E::WindowEvent {
-                event: WE::KeyboardInput(glutin::ElementState::Pressed, _, Some(key), _), ..
+                event: WE::KeyboardInput{
+                    input: glutin::KeyboardInput{
+                        state: glutin::ElementState::Pressed,
+                        virtual_keycode: Some(key), ..
+                    }, ..
+                }, ..
             }) => {
                 let piston_key = map_key(key);
                 if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
@@ -272,11 +289,16 @@ impl GlutinWindow {
                 Some(Input::Press(Button::Keyboard(piston_key)))
             },
             Some(E::WindowEvent {
-                event: WE::KeyboardInput(glutin::ElementState::Released, _, Some(key), _), ..
-            }) =>
+                 event: WE::KeyboardInput{
+                     input: glutin::KeyboardInput{
+                         state: glutin::ElementState::Released,
+                         virtual_keycode: Some(key), ..
+                     }, ..
+                 }, ..
+             }) =>
                 Some(Input::Release(Button::Keyboard(map_key(key)))),
             Some(E::WindowEvent {
-                event: WE::Touch(glutin::Touch { phase, location, id }), ..
+                event: WE::Touch(glutin::Touch { phase, location, id, .. }), ..
             }) => {
                 use glutin::TouchPhase;
                 use input::{Touch, TouchArgs};
@@ -291,13 +313,13 @@ impl GlutinWindow {
                 ))))
             }
             Some(E::WindowEvent {
-                event: WE::MouseMoved(x, y), ..
+                event: WE::MouseMoved{position: (x, y), ..}, ..
             }) => {
                 if let Some(pos) = self.last_cursor_pos {
-                    let dx = x - pos[0];
-                    let dy = y - pos[1];
+                    let dx = (x as i32) - pos[0];
+                    let dy = (y as i32) - pos[1];
                     if self.is_capturing_cursor {
-                        self.last_cursor_pos = Some([x, y]);
+                        self.last_cursor_pos = Some([x as i32, y as i32]);
                         self.fake_capture();
                         // Skip normal mouse movement and emit relative motion only.
                         return Some(Input::Move(Motion::MouseRelative(dx as f64, dy as f64)));
@@ -306,7 +328,7 @@ impl GlutinWindow {
                     self.mouse_relative = Some((dx as f64, dy as f64));
                 }
 
-                self.last_cursor_pos = Some([x, y]);
+                self.last_cursor_pos = Some([x as i32, y as i32]);
                 let f = self.window.hidpi_factor();
                 let x = x as f64 / f as f64;
                 let y = y as f64 / f as f64;
@@ -321,16 +343,16 @@ impl GlutinWindow {
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
             Some(E::WindowEvent {
-                event: WE::MouseWheel(MouseScrollDelta::PixelDelta(x, y), _), ..
+                event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(x, y), ..}, ..
             }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::WindowEvent {
-                event: WE::MouseWheel(MouseScrollDelta::LineDelta(x, y), _), ..
+                event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
             }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::WindowEvent {
-                event: WE::MouseInput(glutin::ElementState::Pressed, button), ..
+                event: WE::MouseInput{state: glutin::ElementState::Pressed, button, ..}, ..
             }) => Some(Input::Press(Button::Mouse(map_mouse(button)))),
             Some(E::WindowEvent {
-                event: WE::MouseInput(glutin::ElementState::Released, button), ..
+                event: WE::MouseInput{state: glutin::ElementState::Released, button, ..}, ..
             }) => Some(Input::Release(Button::Mouse(map_mouse(button)))),
             Some(E::WindowEvent { event: WE::Closed, .. }) => {
                 self.should_close = true;
