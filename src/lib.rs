@@ -15,6 +15,8 @@ use std::collections::VecDeque;
 // External crates.
 use input::{
     keyboard,
+    ButtonArgs,
+    ButtonState,
     CloseArgs,
     MouseButton,
     Button,
@@ -277,7 +279,7 @@ impl GlutinWindow {
                 event: WE::KeyboardInput{
                     input: glutin::KeyboardInput{
                         state: glutin::ElementState::Pressed,
-                        virtual_keycode: Some(key), ..
+                        virtual_keycode: Some(key), scancode, ..
                     }, ..
                 }, ..
             }) => {
@@ -285,17 +287,25 @@ impl GlutinWindow {
                 if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
                     self.should_close = true;
                 }
-                Some(Input::Press(Button::Keyboard(piston_key)))
+                Some(Input::Button(ButtonArgs {
+                    state: ButtonState::Press,
+                    button: Button::Keyboard(piston_key),
+                    scancode: Some(scancode as i32),
+                }))
             },
             Some(E::WindowEvent {
                  event: WE::KeyboardInput{
                      input: glutin::KeyboardInput{
                          state: glutin::ElementState::Released,
-                         virtual_keycode: Some(key), ..
+                         virtual_keycode: Some(key), scancode, ..
                      }, ..
                  }, ..
              }) =>
-                Some(Input::Release(Button::Keyboard(map_key(key)))),
+                Some(Input::Button(ButtonArgs {
+                    state: ButtonState::Release,
+                    button: Button::Keyboard(map_key(key)),
+                    scancode: Some(scancode as i32),
+                })),
             Some(E::WindowEvent {
                 event: WE::Touch(glutin::Touch { phase, location, id, .. }), ..
             }) => {
@@ -349,10 +359,18 @@ impl GlutinWindow {
             }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
             Some(E::WindowEvent {
                 event: WE::MouseInput{state: glutin::ElementState::Pressed, button, ..}, ..
-            }) => Some(Input::Press(Button::Mouse(map_mouse(button)))),
+            }) => Some(Input::Button(ButtonArgs {
+                state: ButtonState::Press,
+                button: Button::Mouse(map_mouse(button)),
+                scancode: None,
+            })),
             Some(E::WindowEvent {
                 event: WE::MouseInput{state: glutin::ElementState::Released, button, ..}, ..
-            }) => Some(Input::Release(Button::Mouse(map_mouse(button)))),
+            }) => Some(Input::Button(ButtonArgs {
+                state: ButtonState::Release,
+                button: Button::Mouse(map_mouse(button)),
+                scancode: None,
+            })),
             Some(E::WindowEvent { event: WE::Closed, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
