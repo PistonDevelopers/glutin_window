@@ -375,7 +375,7 @@ impl GlutinWindow {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
-            _ => None,
+            _ => self.poll_event()
         }
     }
 
