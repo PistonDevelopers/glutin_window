@@ -1,6 +1,5 @@
 
 extern crate glutin_window;
-extern crate shader_version;
 extern crate window;
 
 use glutin_window::GlutinWindow;
