@@ -161,8 +161,8 @@ impl GlutinWindow {
                     glutin::ControlFlow::Break
                 });
             }
-            let event = self.events.pop_front();
-            if let Some(event) = self.handle_event(event) {
+
+            if let Some(event) = self.poll_event() {
                 return event;
             }
         }
@@ -173,11 +173,12 @@ impl GlutinWindow {
         if let Some(event) = self.poll_event() {
             return Some(event);
         }
-        // schedule wake up when time is out.
+        // Schedule wake up when time is out.
         let events_loop_proxy = self.events_loop.create_proxy();
         thread::spawn(move || {
             thread::sleep(timeout);
-            events_loop_proxy.wakeup().ok(); // wakeup can fail only if the event loop went away
+            // Wakeup can fail only if the event loop went away.
+            events_loop_proxy.wakeup().ok();
         });
         {
             let ref mut events = self.events;
@@ -186,17 +187,52 @@ impl GlutinWindow {
                 glutin::ControlFlow::Break
             });
         }
-        let event = self.events.pop_front();
-        if let Some(event) = self.handle_event(event) {
-            Some(event)
-        } else {
-            None
-        }
+
+        self.poll_event()
     }
 
     fn poll_event(&mut self) -> Option<Input> {
         use glutin::Event as E;
         use glutin::WindowEvent as WE;
+
+        // Loop to skip unknown events.
+        loop {
+            let event = self.pre_pop_front_event();
+            if event.is_some() {return event;}
+
+            if self.events.len() == 0 {
+                let ref mut events = self.events;
+                self.events_loop.poll_events(|ev| events.push_back(ev));
+            }
+            let mut ev = self.events.pop_front();
+
+            if self.is_capturing_cursor &&
+               self.last_cursor_pos.is_none() {
+                if let Some(E::WindowEvent {
+                    event: WE::MouseMoved{ position: (x, y), ..}, ..
+                }) = ev {
+                    // Ignore this event since mouse positions
+                    // should not be emitted when capturing cursor.
+                    self.last_cursor_pos = Some([x, y]);
+
+                    if self.events.len() == 0 {
+                        let ref mut events = self.events;
+                        self.events_loop.poll_events(|ev| events.push_back(ev));
+                    }
+                    ev = self.events.pop_front();
+                }
+            }
+
+            let mut unknown = false;
+            let event = self.handle_event(ev, &mut unknown);
+            if unknown {continue};
+            return event;
+        }
+    }
+
+    // These events are emitted before popping a new event from the queue.
+    // This is because Piston handles some events separately.
+    fn pre_pop_front_event(&mut self) -> Option<Input> {
         use input::{ Input, Motion };
 
         // Check for a pending mouse cursor move event.
@@ -211,33 +247,16 @@ impl GlutinWindow {
             return Some(Input::Move(Motion::MouseRelative(x, y)));
         }
 
-        if self.events.len() == 0 {
-            let ref mut events = self.events;
-            self.events_loop.poll_events(|ev| events.push_back(ev));
-        }
-        let mut ev = self.events.pop_front();
-        if self.is_capturing_cursor &&
-           self.last_cursor_pos.is_none() {
-            if let Some(E::WindowEvent {
-                event: WE::MouseMoved{ position: (x, y), ..}, ..
-            }) = ev {
-                // Ignore this event since mouse positions
-                // should not be emitted when capturing cursor.
-                self.last_cursor_pos = Some([x, y]);
-
-                if self.events.len() == 0 {
-                    let ref mut events = self.events;
-                    self.events_loop.poll_events(|ev| events.push_back(ev));
-                }
-                ev = self.events.pop_front();
-            }
-        }
-        self.handle_event(ev)
+        None
     }
 
     /// Convert an incoming Glutin event to Piston input.
     /// Update cursor state if necessary.
-    fn handle_event(&mut self, ev: Option<glutin::Event>) -> Option<Input> {
+    ///
+    /// The `unknown` flag is set to `true` when the event is not recognized.
+    /// This is used to poll another event to make the event loop logic sound.
+    /// When `unknown` is `true`, the return value is `None`.
+    fn handle_event(&mut self, ev: Option<glutin::Event>, unknown: &mut bool) -> Option<Input> {
         use glutin::Event as E;
         use glutin::WindowEvent as WE;
         use glutin::MouseScrollDelta;
@@ -375,7 +394,10 @@ impl GlutinWindow {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
-            _ => self.poll_event()
+            _ => {
+                *unknown = true;
+                None
+            }
         }
     }
 
