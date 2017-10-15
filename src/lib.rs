@@ -71,7 +71,8 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
         .with_multitouch()
         .with_title(settings.get_title());
     if settings.get_fullscreen() {
-        builder = builder.with_fullscreen(glutin::get_primary_monitor());
+        let events_loop = glutin::EventsLoop::new();
+        builder = builder.with_fullscreen(Some(events_loop.get_primary_monitor()));
     }
     builder
 }
