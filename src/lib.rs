@@ -207,7 +207,7 @@ impl GlutinWindow {
             if self.is_capturing_cursor &&
                self.last_cursor_pos.is_none() {
                 if let Some(E::WindowEvent {
-                    event: WE::MouseMoved{ position: (x, y), ..}, ..
+                    event: WE::CursorMoved{ position: (x, y), ..}, ..
                 }) = ev {
                     // Ignore this event since mouse positions
                     // should not be emitted when capturing cursor.
@@ -339,7 +339,7 @@ impl GlutinWindow {
                 ))))
             }
             Some(E::WindowEvent {
-                event: WE::MouseMoved{position: (x, y), ..}, ..
+                event: WE::CursorMoved{position: (x, y), ..}, ..
             }) => {
                 if let Some(pos) = self.last_cursor_pos {
                     let dx = x - pos[0];
@@ -361,10 +361,10 @@ impl GlutinWindow {
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
             Some(E::WindowEvent {
-                event: WE::MouseEntered{..}, ..
+                event: WE::CursorEntered{..}, ..
             }) => Some(Input::Cursor(true)),
             Some(E::WindowEvent {
-                event: WE::MouseLeft{..}, ..
+                event: WE::CursorLeft{..}, ..
             }) => Some(Input::Cursor(false)),
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(x, y), ..}, ..
@@ -416,10 +416,12 @@ impl GlutinWindow {
 
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
-        self.window.get_inner_size().unwrap_or((0, 0)).into()
+        let (w, h) = self.window.get_inner_size().unwrap_or((0, 0));
+        let hidpi = self.window.hidpi_factor();
+        ((w as f32 / hidpi) as u32, (h as f32 / hidpi) as u32).into()
     }
     fn draw_size(&self) -> Size {
-        self.window.get_inner_size_pixels().unwrap_or((0, 0)).into()
+        self.window.get_inner_size().unwrap_or((0, 0)).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
