@@ -473,6 +473,14 @@ impl AdvancedWindow for GlutinWindow {
         let pos: Position = pos.into();
         self.window.set_position(pos.x, pos.y);
     }
+    fn set_size<S: Into<Size>>(&mut self, size: S) {
+        let size: Size = size.into();
+        let hidpi = self.window.hidpi_factor();
+        self.window.set_inner_size(
+            (size.width as f32 / hidpi) as u32,
+            (size.height as f32 / hidpi) as u32
+        );
+    }
 }
 
 impl OpenGLWindow for GlutinWindow {
