@@ -59,6 +59,8 @@ pub struct GlutinWindow {
     events_loop: glutin::EventsLoop,
     // Stores list of events ready for processing.
     events: VecDeque<glutin::Event>,
+    // Corrects the units of `get_inner_size` bug in Glutin.
+    correct_inner_size: f32,
 }
 
 fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -132,6 +134,16 @@ impl GlutinWindow {
         // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s) as *const _);
 
+        // Detect bug in Glutin api for `get_inner_size`.
+        let size = settings.get_size();
+        let hidpi = window.hidpi_factor();
+        let correct_inner_size = if let Some(inner_size) = window.get_inner_size() {
+            if inner_size != (
+                (size.width as f32 * hidpi) as u32,
+                (size.height as f32 * hidpi) as u32
+            ) {hidpi} else {1.0}
+        } else {1.0};
+
         Ok(GlutinWindow {
             window: window,
             title: title,
@@ -143,6 +155,7 @@ impl GlutinWindow {
             mouse_relative: None,
             events_loop: events_loop,
             events: VecDeque::new(),
+            correct_inner_size,
         })
     }
 
@@ -417,11 +430,13 @@ impl GlutinWindow {
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
         let (w, h) = self.window.get_inner_size().unwrap_or((0, 0));
-        let hidpi = self.window.hidpi_factor();
+        let hidpi = self.window.hidpi_factor() / self.correct_inner_size;
         ((w as f32 / hidpi) as u32, (h as f32 / hidpi) as u32).into()
     }
     fn draw_size(&self) -> Size {
-        self.window.get_inner_size().unwrap_or((0, 0)).into()
+        let (w, h) = self.window.get_inner_size().unwrap_or((0, 0));
+        let correct = self.correct_inner_size;
+        ((w as f32 * correct) as u32, (h as f32 * correct) as u32).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
