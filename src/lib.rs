@@ -135,13 +135,10 @@ impl GlutinWindow {
         gl::load_with(|s| window.get_proc_address(s) as *const _);
 
         // Detect bug in Glutin api for `get_inner_size`.
-        let size = settings.get_size();
+        let size = settings.get_size().into();
         let hidpi = window.hidpi_factor();
         let correct_inner_size = if let Some(inner_size) = window.get_inner_size() {
-            if inner_size != (
-                (size.width as f32 * hidpi) as u32,
-                (size.height as f32 * hidpi) as u32
-            ) {hidpi} else {1.0}
+            if hidpi != 1.0 && inner_size == size {hidpi} else {1.0}
         } else {1.0};
 
         Ok(GlutinWindow {
