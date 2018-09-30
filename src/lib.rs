@@ -122,6 +122,9 @@ impl GlutinWindow {
         unsafe { try!(window.make_current().map_err(|e|
                 // This can be simplified in next version of Glutin.
                 match e {
+                    ContextError::OsError(err) => {
+                        err
+                    }
                     ContextError::IoError(ref err) => {
                         String::from(err.description())
                     }
