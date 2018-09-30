@@ -396,7 +396,7 @@ impl GlutinWindow {
                 button: Button::Mouse(map_mouse(button)),
                 scancode: None,
             })),
-            Some(E::WindowEvent { event: WE::Closed, .. }) => {
+            Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
