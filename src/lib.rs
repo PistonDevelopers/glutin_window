@@ -69,7 +69,8 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
         .with_dimensions(size.width, size.height)
         .with_decorations(settings.get_decorated())
         .with_multitouch()
-        .with_title(settings.get_title());
+        .with_title(settings.get_title())
+        .with_resizable(settings.get_resizable());
     if settings.get_fullscreen() {
         let events_loop = glutin::EventsLoop::new();
         builder = builder.with_fullscreen(Some(events_loop.get_primary_monitor()));
@@ -396,7 +397,7 @@ impl GlutinWindow {
                 button: Button::Mouse(map_mouse(button)),
                 scancode: None,
             })),
-            Some(E::WindowEvent { event: WE::Closed, .. }) => {
+            Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
