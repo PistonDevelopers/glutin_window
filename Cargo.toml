@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 gl = "0.10.0"
-glutin = "0.16.0"
+glutin = "0.18.0"
 pistoncore-input = "0.21.0"
 pistoncore-window = "0.32.0"
 shader_version = "0.3.0"
