@@ -60,13 +60,13 @@ pub struct GlutinWindow {
     // Stores list of events ready for processing.
     events: VecDeque<glutin::Event>,
     // Corrects the units of `get_inner_size` bug in Glutin.
-    correct_inner_size: f32,
+    correct_inner_size: f64,
 }
 
 fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
     let size = settings.get_size();
     let mut builder = glutin::WindowBuilder::new()
-        .with_dimensions(size.width, size.height)
+        .with_dimensions((size.width, size.height).into())
         .with_decorations(settings.get_decorated())
         .with_multitouch()
         .with_title(settings.get_title());
@@ -122,6 +122,9 @@ impl GlutinWindow {
         unsafe { try!(window.make_current().map_err(|e|
                 // This can be simplified in next version of Glutin.
                 match e {
+                    ContextError::OsError(err) => {
+                        err
+                    }
                     ContextError::IoError(ref err) => {
                         String::from(err.description())
                     }
@@ -135,8 +138,9 @@ impl GlutinWindow {
         gl::load_with(|s| window.get_proc_address(s) as *const _);
 
         // Detect bug in Glutin api for `get_inner_size`.
-        let size = settings.get_size().into();
-        let hidpi = window.hidpi_factor();
+        let size = settings.get_size();
+        let size = (size.width, size.height).into();
+        let hidpi = window.get_hidpi_factor();
         let correct_inner_size = if let Some(inner_size) = window.get_inner_size() {
             if hidpi != 1.0 && inner_size == size {hidpi} else {1.0}
         } else {1.0};
@@ -217,11 +221,11 @@ impl GlutinWindow {
             if self.is_capturing_cursor &&
                self.last_cursor_pos.is_none() {
                 if let Some(E::WindowEvent {
-                    event: WE::CursorMoved{ position: (x, y), ..}, ..
+                    event: WE::CursorMoved{ position, ..}, ..
                 }) = ev {
                     // Ignore this event since mouse positions
                     // should not be emitted when capturing cursor.
-                    self.last_cursor_pos = Some([x, y]);
+                    self.last_cursor_pos = Some([position.x, position.y]);
 
                     if self.events.len() == 0 {
                         let ref mut events = self.events;
@@ -278,11 +282,11 @@ impl GlutinWindow {
                 None
             }
             Some(E::WindowEvent {
-                event: WE::Resized(w, h), ..
+                event: WE::Resized(size), ..
             }) => {
-                let dpi_factor = self.window.hidpi_factor();
-                let w = (w as f32 / dpi_factor) as u32;
-                let h = (h as f32 / dpi_factor) as u32;
+                let dpi_factor = self.window.get_hidpi_factor();
+                let w = (size.width / dpi_factor) as u32;
+                let h = (size.height / dpi_factor) as u32;
                 Some(Input::Resize(w, h))
             },
             Some(E::WindowEvent {
@@ -340,7 +344,7 @@ impl GlutinWindow {
                 use input::{Touch, TouchArgs};
 
                 Some(Input::Move(Motion::Touch(TouchArgs::new(
-                    0, id as i64, [location.0, location.1], 1.0, match phase {
+                    0, id as i64, [location.x, location.y], 1.0, match phase {
                         TouchPhase::Started => Touch::Start,
                         TouchPhase::Moved => Touch::Move,
                         TouchPhase::Ended => Touch::End,
@@ -349,8 +353,11 @@ impl GlutinWindow {
                 ))))
             }
             Some(E::WindowEvent {
-                event: WE::CursorMoved{position: (x, y), ..}, ..
+                event: WE::CursorMoved{position, ..}, ..
             }) => {
+                let x = position.x;
+                let y = position.y;
+
                 if let Some(pos) = self.last_cursor_pos {
                     let dx = x - pos[0];
                     let dy = y - pos[1];
@@ -365,7 +372,7 @@ impl GlutinWindow {
                 }
 
                 self.last_cursor_pos = Some([x, y]);
-                let f = self.window.hidpi_factor();
+                let f = self.window.get_hidpi_factor();
                 let x = x as f64 / f as f64;
                 let y = y as f64 / f as f64;
                 Some(Input::Move(Motion::MouseCursor(x, y)))
@@ -377,8 +384,8 @@ impl GlutinWindow {
                 event: WE::CursorLeft{..}, ..
             }) => Some(Input::Cursor(false)),
             Some(E::WindowEvent {
-                event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(x, y), ..}, ..
-            }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
+                event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(pos), ..}, ..
+            }) => Some(Input::Move(Motion::MouseScroll(pos.x as f64, pos.y as f64))),
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
             }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
@@ -396,7 +403,7 @@ impl GlutinWindow {
                 button: Button::Mouse(map_mouse(button)),
                 scancode: None,
             })),
-            Some(E::WindowEvent { event: WE::Closed, .. }) => {
+            Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
             }
@@ -416,7 +423,7 @@ impl GlutinWindow {
             let dx = cx - pos[0];
             let dy = cy - pos[1];
             if dx != 0.0 || dy != 0.0 {
-                if let Ok(_) = self.window.set_cursor_position(cx as i32, cy as i32) {
+                if let Ok(_) = self.window.set_cursor_position((cx, cy).into()) {
                     self.last_cursor_pos = Some([cx, cy]);
                 }
             }
@@ -426,14 +433,14 @@ impl GlutinWindow {
 
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
-        let (w, h) = self.window.get_inner_size().unwrap_or((0, 0));
-        let hidpi = self.window.hidpi_factor() / self.correct_inner_size;
-        ((w as f32 / hidpi) as u32, (h as f32 / hidpi) as u32).into()
+        let size = self.window.get_inner_size().unwrap_or((0.0, 0.0).into());
+        let hidpi = self.window.get_hidpi_factor() / self.correct_inner_size;
+        ((size.width / hidpi) as u32, (size.height / hidpi) as u32).into()
     }
     fn draw_size(&self) -> Size {
-        let (w, h) = self.window.get_inner_size().unwrap_or((0, 0));
+        let size = self.window.get_inner_size().unwrap_or((0.0, 0.0).into());
         let correct = self.correct_inner_size;
-        ((w as f32 * correct) as u32, (h as f32 * correct) as u32).into()
+        ((size.width * correct) as u32, (size.height * correct) as u32).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
@@ -459,18 +466,12 @@ impl AdvancedWindow for GlutinWindow {
     fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
     fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
     fn set_capture_cursor(&mut self, value: bool) {
-        use glutin::CursorState;
-
-        // Normally we would call `.set_cursor_state(CursorState::Grab)`
+        // Normally we would call `.grab_cursor(true)`
         // but since relative mouse events does not work,
         // the capturing of cursor is faked by hiding the cursor
         // and setting the position to the center of window.
         self.is_capturing_cursor = value;
-        if value {
-            let _ = self.window.set_cursor_state(CursorState::Hide);
-        } else {
-            let _ = self.window.set_cursor_state(CursorState::Normal);
-        }
+        self.window.hide_cursor(value);
         if value {
             self.fake_capture();
         }
@@ -478,20 +479,20 @@ impl AdvancedWindow for GlutinWindow {
     fn show(&mut self) { self.window.show(); }
     fn hide(&mut self) { self.window.hide(); }
     fn get_position(&self) -> Option<Position> {
-        self.window.get_position().map(|(x, y)|
-            Position { x: x, y: y })
+        self.window.get_position().map(|pos|
+            Position { x: pos.x as i32, y: pos.y as i32 })
     }
     fn set_position<P: Into<Position>>(&mut self, pos: P) {
         let pos: Position = pos.into();
-        self.window.set_position(pos.x, pos.y);
+        self.window.set_position((pos.x, pos.y).into());
     }
     fn set_size<S: Into<Size>>(&mut self, size: S) {
         let size: Size = size.into();
-        let hidpi = self.window.hidpi_factor();
-        self.window.set_inner_size(
-            (size.width as f32 * hidpi) as u32,
-            (size.height as f32 * hidpi) as u32
-        );
+        let hidpi = self.window.get_hidpi_factor();
+        self.window.set_inner_size((
+            size.width as f64 * hidpi,
+            size.height as f64 * hidpi
+        ).into());
     }
 }
 
@@ -610,11 +611,9 @@ pub fn map_key(keycode: glutin::VirtualKeyCode) -> keyboard::Key {
         K::LShift => Key::LShift,
         K::LControl => Key::LCtrl,
         K::LAlt => Key::LAlt,
-        K::LMenu => Key::LGui,
         K::RShift => Key::RShift,
         K::RControl => Key::RCtrl,
         K::RAlt => Key::RAlt,
-        K::RMenu => Key::RGui,
         // Map to backslash?
         // K::GraveAccent => Key::Unknown,
         K::Home => Key::Home,
