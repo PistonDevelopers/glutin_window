@@ -286,9 +286,8 @@ impl GlutinWindow {
                 event: WE::Resized(size), ..
             }) => {
                 let dpi_factor = self.window.get_hidpi_factor();
-                let w = (size.width / dpi_factor) as u32;
-                let h = (size.height / dpi_factor) as u32;
-                Some(Input::Resize(w, h))
+                let physical = size.to_physical(dpi_factor);
+                Some(Input::Resize(physical.width as u32, physical.height as u32))
             },
             Some(E::WindowEvent {
                 event: WE::ReceivedCharacter(ch), ..
