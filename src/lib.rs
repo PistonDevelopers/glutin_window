@@ -361,9 +361,6 @@ impl GlutinWindow {
                 }
 
                 self.last_cursor_pos = Some([x, y]);
-                let f = self.window.get_hidpi_factor();
-                let x = x as f64 / f as f64;
-                let y = y as f64 / f as f64;
                 Some(Input::Move(Motion::MouseCursor(x, y)))
             }
             Some(E::WindowEvent {
