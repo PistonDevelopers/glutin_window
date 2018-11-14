@@ -32,7 +32,7 @@ use window::{
     Size,
     Position,
 };
-use glutin::{ Api, GlRequest };
+use glutin::GlRequest;
 use std::time::Duration;
 use std::thread;
 
@@ -80,7 +80,10 @@ fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBu
     let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
     let (major, minor) = opengl.get_major_minor();
     let mut builder = glutin::ContextBuilder::new()
-        .with_gl(GlRequest::Specific(Api::OpenGl, (major as u8, minor as u8)))
+        .with_gl(GlRequest::GlThenGles {
+            opengl_version: (major as u8, minor as u8),
+            opengles_version: (major as u8, minor as u8),
+        })
         .with_srgb(settings.get_srgb());
     let samples = settings.get_samples();
     if settings.get_vsync() {
