@@ -476,10 +476,9 @@ impl AdvancedWindow for GlutinWindow {
     }
     fn set_size<S: Into<Size>>(&mut self, size: S) {
         let size: Size = size.into();
-        let hidpi = self.window.get_hidpi_factor();
         self.window.set_inner_size((
-            size.width as f64 * hidpi,
-            size.height as f64 * hidpi
+            size.width as f64,
+            size.height as f64,
         ).into());
     }
 }
