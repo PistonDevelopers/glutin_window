@@ -277,7 +277,7 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::Resized(size), ..
             }) => {
-                Some(Input::Resize(size.width as u32, size.height as u32))
+                Some(Input::Resize(size.width, size.height))
             },
             Some(E::WindowEvent {
                 event: WE::ReceivedCharacter(ch), ..
@@ -405,8 +405,8 @@ impl GlutinWindow {
         if let Some(pos) = self.last_cursor_pos {
             // Fake capturing of cursor.
             let size = self.size();
-            let cx = (size.width / 2) as f64;
-            let cy = (size.height / 2) as f64;
+            let cx = size.width / 2.0;
+            let cy = size.height / 2.0;
             let dx = cx - pos[0];
             let dy = cy - pos[1];
             if dx != 0.0 || dy != 0.0 {
