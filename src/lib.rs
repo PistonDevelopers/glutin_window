@@ -421,14 +421,14 @@ impl GlutinWindow {
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
         let size = self.window.get_inner_size().unwrap_or((0.0, 0.0).into());
-        (size.width as u32, size.height as u32).into()
+        (size.width, size.height).into()
     }
     fn draw_size(&self) -> Size {
         let size = self.window
             .get_inner_size()
             .unwrap_or((0.0, 0.0).into())
             .to_physical(self.window.get_hidpi_factor());
-        (size.width as u32, size.height as u32).into()
+        (size.width, size.height).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
