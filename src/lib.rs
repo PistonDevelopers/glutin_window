@@ -11,6 +11,7 @@ extern crate shader_version;
 use glutin::GlContext;
 
 use std::collections::VecDeque;
+use std::error::Error;
 
 // External crates.
 use input::{
@@ -97,10 +98,7 @@ fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBu
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
-    pub fn new(settings: &WindowSettings) -> Result<Self, String> {
-        use std::error::Error;
-        use glutin::ContextError;
-
+    pub fn new(settings: &WindowSettings) -> Result<Self, Box<Error>> {
         let events_loop = glutin::EventsLoop::new();
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
@@ -112,29 +110,14 @@ impl GlutinWindow {
         let window = match window {
                 Ok(window) => window,
                 Err(_) => {
-                    try!(
-                        glutin::GlWindow::new(
-                            window_builder_from_settings(&settings),
-                            context_builder_from_settings(&settings.clone().samples(0)),
-                            &events_loop
-                        ).map_err(|e| format!("{}", e))
-                    )
+                    glutin::GlWindow::new(
+                        window_builder_from_settings(&settings),
+                        context_builder_from_settings(&settings.clone().samples(0)),
+                        &events_loop
+                    )?
                 }
             };
-        unsafe { try!(window.make_current().map_err(|e|
-                // This can be simplified in next version of Glutin.
-                match e {
-                    ContextError::OsError(err) => {
-                        err
-                    }
-                    ContextError::IoError(ref err) => {
-                        String::from(err.description())
-                    }
-                    ContextError::ContextLost => {
-                        String::from("Context lost")
-                    }
-                }
-            )); }
+        unsafe { window.make_current()?; }
 
         // Load the OpenGL function pointers.
         gl::load_with(|s| window.get_proc_address(s) as *const _);
@@ -440,7 +423,7 @@ impl Window for GlutinWindow {
 
 impl BuildFromWindowSettings for GlutinWindow {
     fn build_from_window_settings(settings: &WindowSettings)
-    -> Result<Self, String> {
+    -> Result<Self, Box<Error>> {
         GlutinWindow::new(settings)
     }
 }
