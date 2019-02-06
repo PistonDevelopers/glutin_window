@@ -22,6 +22,7 @@ use input::{
     MouseButton,
     Button,
     Input,
+    FileDrag
 };
 use window::{
     BuildFromWindowSettings,
@@ -373,6 +374,15 @@ impl GlutinWindow {
                 button: Button::Mouse(map_mouse(button)),
                 scancode: None,
             })),
+            Some(E::WindowEvent {
+                event: WE::HoveredFile(path), ..
+            }) => Some(Input::FileDrag(FileDrag::Hover(path))),
+            Some(E::WindowEvent {
+                event: WE::DroppedFile(path), ..
+            }) => Some(Input::FileDrag(FileDrag::Drop(path))),
+            Some(E::WindowEvent {
+                event: WE::HoveredFileCancelled, ..
+            }) => Some(Input::FileDrag(FileDrag::Cancel)),
             Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
                 self.should_close = true;
                 Some(Input::Close(CloseArgs))
