@@ -48,6 +48,7 @@ pub struct GlutinWindow {
     title: String,
     exit_on_esc: bool,
     should_close: bool,
+    automatic_close: bool,
     // Used to fake capturing of cursor,
     // to get relative mouse events.
     is_capturing_cursor: bool,
@@ -128,6 +129,7 @@ impl GlutinWindow {
             title: title,
             exit_on_esc: exit_on_esc,
             should_close: false,
+            automatic_close: settings.get_automatic_close(),
             cursor_pos: None,
             is_capturing_cursor: false,
             last_cursor_pos: None,
@@ -384,7 +386,9 @@ impl GlutinWindow {
                 event: WE::HoveredFileCancelled, ..
             }) => Some(Input::FileDrag(FileDrag::Cancel)),
             Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
-                self.should_close = true;
+                if self.automatic_close {
+                    self.should_close = true;
+                }
                 Some(Input::Close(CloseArgs))
             }
             _ => {
