@@ -450,6 +450,8 @@ impl AdvancedWindow for GlutinWindow {
     }
     fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
     fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
+    fn get_automatic_close(&self) -> bool { self.automatic_close }
+    fn set_automatic_close(&mut self, value: bool) { self.automatic_close = value; }
     fn set_capture_cursor(&mut self, value: bool) {
         // Normally we would call `.grab_cursor(true)`
         // but since relative mouse events does not work,
