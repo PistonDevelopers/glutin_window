@@ -33,6 +33,7 @@ use window::{
     WindowSettings,
     Size,
     Position,
+    Api,
 };
 use glutin::GlRequest;
 use std::time::Duration;
@@ -80,12 +81,14 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
 }
 
 fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBuilder {
-    let opengl = settings.get_maybe_opengl().unwrap_or(OpenGL::V3_2);
-    let (major, minor) = opengl.get_major_minor();
+    let api = settings.get_maybe_graphics_api().unwrap_or(Api::opengl(3, 2));
+    if api.api != "OpenGL" {
+        panic!("Expected OpenGL api in window settings when creating window.")
+    };
     let mut builder = glutin::ContextBuilder::new()
         .with_gl(GlRequest::GlThenGles {
-            opengl_version: (major as u8, minor as u8),
-            opengles_version: (major as u8, minor as u8),
+            opengl_version: (api.major as u8, api.minor as u8),
+            opengles_version: (api.major as u8, api.minor as u8),
         })
         .with_srgb(settings.get_srgb());
     let samples = settings.get_samples();
@@ -224,7 +227,7 @@ impl GlutinWindow {
     // These events are emitted before popping a new event from the queue.
     // This is because Piston handles some events separately.
     fn pre_pop_front_event(&mut self) -> Option<Input> {
-        use input::{ Input, Motion };
+        use input::Motion;
 
         // Check for a pending mouse cursor move event.
         if let Some(pos) = self.cursor_pos {
@@ -251,7 +254,7 @@ impl GlutinWindow {
         use glutin::Event as E;
         use glutin::WindowEvent as WE;
         use glutin::MouseScrollDelta;
-        use input::{ Key, Input, Motion };
+        use input::{ Key, Motion };
 
         match ev {
             None => {
