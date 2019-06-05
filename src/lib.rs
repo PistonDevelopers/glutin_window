@@ -34,6 +34,7 @@ use window::{
     Size,
     Position,
     Api,
+    UnsupportedGraphicsApiError,
 };
 use glutin::GlRequest;
 use std::time::Duration;
@@ -80,10 +81,15 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
     builder
 }
 
-fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBuilder {
+fn context_builder_from_settings(
+    settings: &WindowSettings
+) -> Result<glutin::ContextBuilder, Box<Error>> {
     let api = settings.get_maybe_graphics_api().unwrap_or(Api::opengl(3, 2));
     if api.api != "OpenGL" {
-        panic!("Expected OpenGL api in window settings when creating window.")
+        return Err(UnsupportedGraphicsApiError {
+            found: api.api,
+            expected: vec!["OpenGL".into()]
+        }.into());
     };
     let mut builder = glutin::ContextBuilder::new()
         .with_gl(GlRequest::GlThenGles {
@@ -98,7 +104,8 @@ fn context_builder_from_settings(settings: &WindowSettings) -> glutin::ContextBu
     if samples != 0 {
         builder = builder.with_multisampling(samples as u16);
     }
-    builder}
+    Ok(builder)
+}
 
 impl GlutinWindow {
 
@@ -109,7 +116,7 @@ impl GlutinWindow {
         let exit_on_esc = settings.get_exit_on_esc();
         let window = glutin::GlWindow::new(
             window_builder_from_settings(&settings),
-            context_builder_from_settings(&settings),
+            context_builder_from_settings(&settings)?,
             &events_loop
         );
         let window = match window {
@@ -117,7 +124,7 @@ impl GlutinWindow {
                 Err(_) => {
                     glutin::GlWindow::new(
                         window_builder_from_settings(&settings),
-                        context_builder_from_settings(&settings.clone().samples(0)),
+                        context_builder_from_settings(&settings.clone().samples(0))?,
                         &events_loop
                     )?
                 }
