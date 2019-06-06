@@ -22,7 +22,8 @@ use input::{
     MouseButton,
     Button,
     Input,
-    FileDrag
+    FileDrag,
+    TimeStamp,
 };
 use window::{
     BuildFromWindowSettings,
@@ -149,7 +150,7 @@ impl GlutinWindow {
         })
     }
 
-    fn wait_event(&mut self) -> Input {
+    fn wait_event(&mut self) -> (Input, Option<TimeStamp>) {
         // First check for and handle any pending events.
         if let Some(event) = self.poll_event() {
             return event;
@@ -169,7 +170,7 @@ impl GlutinWindow {
         }
     }
 
-    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Input> {
+    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<(Input, Option<TimeStamp>)> {
         // First check for and handle any pending events.
         if let Some(event) = self.poll_event() {
             return Some(event);
@@ -192,14 +193,14 @@ impl GlutinWindow {
         self.poll_event()
     }
 
-    fn poll_event(&mut self) -> Option<Input> {
+    fn poll_event(&mut self) -> Option<(Input, Option<TimeStamp>)> {
         use glutin::Event as E;
         use glutin::WindowEvent as WE;
 
         // Loop to skip unknown events.
         loop {
             let event = self.pre_pop_front_event();
-            if event.is_some() {return event;}
+            if event.is_some() {return event.map(|x| (x, None));}
 
             if self.events.len() == 0 {
                 let ref mut events = self.events;
@@ -227,7 +228,7 @@ impl GlutinWindow {
             let mut unknown = false;
             let event = self.handle_event(ev, &mut unknown);
             if unknown {continue};
-            return event;
+            return event.map(|x| (x, None));
         }
     }
 
@@ -440,9 +441,11 @@ impl Window for GlutinWindow {
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
     fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
-    fn wait_event(&mut self) -> Input { self.wait_event() }
-    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Input> { self.wait_event_timeout(timeout) }
-    fn poll_event(&mut self) -> Option<Input> { self.poll_event() }
+    fn wait_event(&mut self) -> (Input, Option<TimeStamp>) { self.wait_event() }
+    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<(Input, Option<TimeStamp>)> {
+        self.wait_event_timeout(timeout)
+    }
+    fn poll_event(&mut self) -> Option<(Input, Option<TimeStamp>)> { self.poll_event() }
 }
 
 impl BuildFromWindowSettings for GlutinWindow {
