@@ -24,6 +24,7 @@ use input::{
     Input,
     FileDrag,
     TimeStamp,
+    ResizeArgs,
 };
 use window::{
     BuildFromWindowSettings,
@@ -240,13 +241,13 @@ impl GlutinWindow {
         // Check for a pending mouse cursor move event.
         if let Some(pos) = self.cursor_pos {
             self.cursor_pos = None;
-            return Some(Input::Move(Motion::MouseCursor(pos[0], pos[1])));
+            return Some(Input::Move(Motion::MouseCursor(pos)));
         }
 
         // Check for a pending relative mouse move event.
         if let Some((x, y)) = self.mouse_relative {
             self.mouse_relative = None;
-            return Some(Input::Move(Motion::MouseRelative(x, y)));
+            return Some(Input::Move(Motion::MouseRelative([x, y])));
         }
 
         None
@@ -274,7 +275,13 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::Resized(size), ..
             }) => {
-                Some(Input::Resize(size.width, size.height))
+                let draw_size = self.draw_size();
+                Some(Input::Resize(ResizeArgs {
+                    width: size.width,
+                    height: size.height,
+                    draw_width: draw_size.width as u32,
+                    draw_height: draw_size.height as u32,
+                }))
             },
             Some(E::WindowEvent {
                 event: WE::ReceivedCharacter(ch), ..
@@ -352,14 +359,14 @@ impl GlutinWindow {
                         self.last_cursor_pos = Some([x, y]);
                         self.fake_capture();
                         // Skip normal mouse movement and emit relative motion only.
-                        return Some(Input::Move(Motion::MouseRelative(dx as f64, dy as f64)));
+                        return Some(Input::Move(Motion::MouseRelative([dx as f64, dy as f64])));
                     }
                     // Send relative mouse movement next time.
                     self.mouse_relative = Some((dx as f64, dy as f64));
                 }
 
                 self.last_cursor_pos = Some([x, y]);
-                Some(Input::Move(Motion::MouseCursor(x, y)))
+                Some(Input::Move(Motion::MouseCursor([x, y])))
             }
             Some(E::WindowEvent {
                 event: WE::CursorEntered{..}, ..
@@ -369,10 +376,10 @@ impl GlutinWindow {
             }) => Some(Input::Cursor(false)),
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(pos), ..}, ..
-            }) => Some(Input::Move(Motion::MouseScroll(pos.x as f64, pos.y as f64))),
+            }) => Some(Input::Move(Motion::MouseScroll([pos.x as f64, pos.y as f64]))),
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
-            }) => Some(Input::Move(Motion::MouseScroll(x as f64, y as f64))),
+            }) => Some(Input::Move(Motion::MouseScroll([x as f64, y as f64]))),
             Some(E::WindowEvent {
                 event: WE::MouseInput{state: glutin::ElementState::Pressed, button, ..}, ..
             }) => Some(Input::Button(ButtonArgs {
