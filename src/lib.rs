@@ -277,10 +277,8 @@ impl GlutinWindow {
             }) => {
                 let draw_size = self.draw_size();
                 Some(Input::Resize(ResizeArgs {
-                    width: size.width,
-                    height: size.height,
-                    draw_width: draw_size.width as u32,
-                    draw_height: draw_size.height as u32,
+                    window_size: [size.width, size.height],
+                    draw_size: draw_size.into(),
                 }))
             },
             Some(E::WindowEvent {
