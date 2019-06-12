@@ -8,8 +8,6 @@ extern crate input;
 extern crate window;
 extern crate shader_version;
 
-use glutin::GlContext;
-
 use std::collections::VecDeque;
 use std::error::Error;
 
@@ -47,7 +45,7 @@ pub use shader_version::OpenGL;
 /// Contains stuff for game window.
 pub struct GlutinWindow {
     /// The window.
-    pub window: glutin::GlWindow,
+    pub ctx: glutin::ContextWrapper<glutin::PossiblyCurrent, glutin::Window>,
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
@@ -85,7 +83,7 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
 
 fn context_builder_from_settings(
     settings: &WindowSettings
-) -> Result<glutin::ContextBuilder, Box<Error>> {
+) -> Result<glutin::ContextBuilder<glutin::NotCurrent>, Box<Error>> {
     let api = settings.get_maybe_graphics_api().unwrap_or(Api::opengl(3, 2));
     if api.api != "OpenGL" {
         return Err(UnsupportedGraphicsApiError {
@@ -116,37 +114,35 @@ impl GlutinWindow {
         let events_loop = glutin::EventsLoop::new();
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
-        let window = glutin::GlWindow::new(
-            window_builder_from_settings(&settings),
-            context_builder_from_settings(&settings)?,
-            &events_loop
-        );
-        let window = match window {
-                Ok(window) => window,
+        let window_builder = window_builder_from_settings(&settings);
+        let context_builder = context_builder_from_settings(&settings)?;
+        let ctx = context_builder.build_windowed(window_builder, &events_loop);
+        let ctx = match ctx {
+                Ok(ctx) => ctx,
                 Err(_) => {
-                    glutin::GlWindow::new(
-                        window_builder_from_settings(&settings),
-                        context_builder_from_settings(&settings.clone().samples(0))?,
-                        &events_loop
-                    )?
+                    let settings = settings.clone().samples(0);
+                    let window_builder = window_builder_from_settings(&settings);
+                    let context_builder = context_builder_from_settings(&settings)?;
+                    let ctx = context_builder.build_windowed(window_builder, &events_loop)?;
+                    ctx
                 }
             };
-        unsafe { window.make_current()?; }
+        let ctx = unsafe { ctx.make_current().map_err(|(_, err)| err)? };
 
         // Load the OpenGL function pointers.
-        gl::load_with(|s| window.get_proc_address(s) as *const _);
+        gl::load_with(|s| ctx.get_proc_address(s) as *const _);
 
         Ok(GlutinWindow {
-            window: window,
-            title: title,
-            exit_on_esc: exit_on_esc,
+            ctx,
+            title,
+            exit_on_esc,
             should_close: false,
             automatic_close: settings.get_automatic_close(),
             cursor_pos: None,
             is_capturing_cursor: false,
             last_cursor_pos: None,
             mouse_relative: None,
-            events_loop: events_loop,
+            events_loop,
             events: VecDeque::new(),
         })
     }
@@ -423,7 +419,7 @@ impl GlutinWindow {
             let dx = cx - pos[0];
             let dy = cy - pos[1];
             if dx != 0.0 || dy != 0.0 {
-                if let Ok(_) = self.window.set_cursor_position((cx, cy).into()) {
+                if let Ok(_) = self.ctx.window().set_cursor_position((cx, cy).into()) {
                     self.last_cursor_pos = Some([cx, cy]);
                 }
             }
@@ -433,19 +429,19 @@ impl GlutinWindow {
 
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
-        let size = self.window.get_inner_size().unwrap_or((0.0, 0.0).into());
+        let size = self.ctx.window().get_inner_size().unwrap_or((0.0, 0.0).into());
         (size.width, size.height).into()
     }
     fn draw_size(&self) -> Size {
-        let size = self.window
+        let size = self.ctx.window()
             .get_inner_size()
             .unwrap_or((0.0, 0.0).into())
-            .to_physical(self.window.get_hidpi_factor());
+            .to_physical(self.ctx.window().get_hidpi_factor());
         (size.width, size.height).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
-    fn swap_buffers(&mut self) { let _ = self.window.swap_buffers(); }
+    fn swap_buffers(&mut self) { let _ = self.ctx.swap_buffers(); }
     fn wait_event(&mut self) -> (Input, Option<TimeStamp>) { self.wait_event() }
     fn wait_event_timeout(&mut self, timeout: Duration) -> Option<(Input, Option<TimeStamp>)> {
         self.wait_event_timeout(timeout)
@@ -464,7 +460,7 @@ impl AdvancedWindow for GlutinWindow {
     fn get_title(&self) -> String { self.title.clone() }
     fn set_title(&mut self, value: String) {
         self.title = value;
-        self.window.set_title(&self.title);
+        self.ctx.window().set_title(&self.title);
     }
     fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
     fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
@@ -476,24 +472,24 @@ impl AdvancedWindow for GlutinWindow {
         // the capturing of cursor is faked by hiding the cursor
         // and setting the position to the center of window.
         self.is_capturing_cursor = value;
-        self.window.hide_cursor(value);
+        self.ctx.window().hide_cursor(value);
         if value {
             self.fake_capture();
         }
     }
-    fn show(&mut self) { self.window.show(); }
-    fn hide(&mut self) { self.window.hide(); }
+    fn show(&mut self) { self.ctx.window().show(); }
+    fn hide(&mut self) { self.ctx.window().hide(); }
     fn get_position(&self) -> Option<Position> {
-        self.window.get_position().map(|pos|
+        self.ctx.window().get_position().map(|pos|
             Position { x: pos.x as i32, y: pos.y as i32 })
     }
     fn set_position<P: Into<Position>>(&mut self, pos: P) {
         let pos: Position = pos.into();
-        self.window.set_position((pos.x, pos.y).into());
+        self.ctx.window().set_position((pos.x, pos.y).into());
     }
     fn set_size<S: Into<Size>>(&mut self, size: S) {
         let size: Size = size.into();
-        self.window.set_inner_size((
+        self.ctx.window().set_inner_size((
             size.width as f64,
             size.height as f64,
         ).into());
@@ -502,17 +498,18 @@ impl AdvancedWindow for GlutinWindow {
 
 impl OpenGLWindow for GlutinWindow {
     fn get_proc_address(&mut self, proc_name: &str) -> ProcAddress {
-        self.window.get_proc_address(proc_name) as *const _
+        self.ctx.get_proc_address(proc_name) as *const _
     }
 
     fn is_current(&self) -> bool {
-        self.window.is_current()
+        self.ctx.is_current()
     }
 
     fn make_current(&mut self) {
-        unsafe {
-            self.window.make_current().unwrap()
-        }
+        use std::mem::{replace, zeroed};
+
+        let ctx = replace(&mut self.ctx, unsafe{zeroed()});
+        self.ctx = unsafe {ctx.make_current().unwrap()};
     }
 }
 
