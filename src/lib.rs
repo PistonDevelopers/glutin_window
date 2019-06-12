@@ -506,10 +506,10 @@ impl OpenGLWindow for GlutinWindow {
     }
 
     fn make_current(&mut self) {
-        use std::mem::{replace, zeroed};
+        use std::mem::{replace, zeroed, forget};
 
         let ctx = replace(&mut self.ctx, unsafe{zeroed()});
-        self.ctx = unsafe {ctx.make_current().unwrap()};
+        forget(replace(&mut self.ctx, unsafe {ctx.make_current().unwrap()}));
     }
 }
 
