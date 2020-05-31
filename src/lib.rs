@@ -83,7 +83,7 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuil
 
 fn context_builder_from_settings(
     settings: &WindowSettings
-) -> Result<glutin::ContextBuilder<glutin::NotCurrent>, Box<Error>> {
+) -> Result<glutin::ContextBuilder<glutin::NotCurrent>, Box<dyn Error>> {
     let api = settings.get_maybe_graphics_api().unwrap_or(Api::opengl(3, 2));
     if api.api != "OpenGL" {
         return Err(UnsupportedGraphicsApiError {
@@ -110,7 +110,7 @@ fn context_builder_from_settings(
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
-    pub fn new(settings: &WindowSettings) -> Result<Self, Box<Error>> {
+    pub fn new(settings: &WindowSettings) -> Result<Self, Box<dyn Error>> {
         let events_loop = glutin::EventsLoop::new();
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
@@ -451,7 +451,7 @@ impl Window for GlutinWindow {
 
 impl BuildFromWindowSettings for GlutinWindow {
     fn build_from_window_settings(settings: &WindowSettings)
-    -> Result<Self, Box<Error>> {
+    -> Result<Self, Box<dyn Error>> {
         GlutinWindow::new(settings)
     }
 }
@@ -508,6 +508,7 @@ impl OpenGLWindow for GlutinWindow {
     fn make_current(&mut self) {
         use std::mem::{replace, zeroed, forget};
 
+        #[allow(invalid_value)]
         let ctx = replace(&mut self.ctx, unsafe{zeroed()});
         forget(replace(&mut self.ctx, unsafe {ctx.make_current().unwrap()}));
     }
