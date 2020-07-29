@@ -64,6 +64,9 @@ pub struct GlutinWindow {
     events_loop: glutin::EventsLoop,
     // Stores list of events ready for processing.
     events: VecDeque<glutin::Event>,
+    // Stores the last key pressed to avoid 
+    // repetition of the same PressedEvent
+    last_key_pressed: Option<input::Key>  
 }
 
 fn window_builder_from_settings(settings: &WindowSettings) -> glutin::WindowBuilder {
@@ -144,6 +147,7 @@ impl GlutinWindow {
             mouse_relative: None,
             events_loop,
             events: VecDeque::new(),
+            last_key_pressed: None,
         })
     }
 
@@ -306,25 +310,37 @@ impl GlutinWindow {
                 if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
                     self.should_close = true;
                 }
+                if Some(piston_key) == self.last_key_pressed { // Key is repeated
+                    *unknown = true; // There is no event for KeyRepeat
+                    None
+                }
+                else {
+                    self.last_key_pressed = Some(piston_key);
+                    Some(Input::Button(ButtonArgs {
+                        state: ButtonState::Press,
+                        button: Button::Keyboard(piston_key),
+                        scancode: Some(scancode as i32),
+                    }))
+                }
+            },
+            Some(E::WindowEvent {
+                event: WE::KeyboardInput{
+                    input: glutin::KeyboardInput{
+                        state: glutin::ElementState::Released,
+                        virtual_keycode: Some(key), scancode, ..
+                    }, ..
+                }, ..
+            }) => {
+                let piston_key = map_key(key);
+                if Some(piston_key) == self.last_key_pressed {
+                    self.last_key_pressed = None;
+                }
                 Some(Input::Button(ButtonArgs {
-                    state: ButtonState::Press,
+                    state: ButtonState::Release,
                     button: Button::Keyboard(piston_key),
                     scancode: Some(scancode as i32),
                 }))
             },
-            Some(E::WindowEvent {
-                 event: WE::KeyboardInput{
-                     input: glutin::KeyboardInput{
-                         state: glutin::ElementState::Released,
-                         virtual_keycode: Some(key), scancode, ..
-                     }, ..
-                 }, ..
-             }) =>
-                Some(Input::Button(ButtonArgs {
-                    state: ButtonState::Release,
-                    button: Button::Keyboard(map_key(key)),
-                    scancode: Some(scancode as i32),
-                })),
             Some(E::WindowEvent {
                 event: WE::Touch(glutin::Touch { phase, location, id, .. }), ..
             }) => {
