@@ -146,6 +146,33 @@ impl GlutinWindow {
             events: VecDeque::new(),
         })
     }
+    
+    /// Creates a game window from a pre-existing Glutin event loop and window builder.
+    pub fn from_raw(settings: &WindowSettings, events_loop: glutin::EventsLoop, window_builder: glutin::WindowBuilder) -> Result<Self, Box<dyn Error>> {
+        let title = settings.get_title();
+        let exit_on_esc = settings.get_exit_on_esc();
+        
+        let context_builder = context_builder_from_settings(&settings)?;
+        let ctx = context_builder.build_windowed(window_builder, &events_loop)?;
+        let ctx = unsafe { ctx.make_current().map_err(|(_, err)| err)? };
+
+        // Load the OpenGL function pointers.
+        gl::load_with(|s| ctx.get_proc_address(s) as *const _);
+
+        Ok(GlutinWindow {
+            ctx,
+            title,
+            exit_on_esc,
+            should_close: false,
+            automatic_close: settings.get_automatic_close(),
+            cursor_pos: None,
+            is_capturing_cursor: false,
+            last_cursor_pos: None,
+            mouse_relative: None,
+            events_loop,
+            events: VecDeque::new(),
+        })
+    }
 
     fn wait_event(&mut self) -> Event {
         // First check for and handle any pending events.
