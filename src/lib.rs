@@ -656,10 +656,10 @@ pub fn map_key(keycode: glutin::event::VirtualKeyCode) -> keyboard::Key {
         K::Numpad8 => Key::NumPad8,
         K::Numpad9 => Key::NumPad9,
         K::NumpadComma => Key::NumPadDecimal,
-        K::Divide => Key::NumPadDivide,
-        K::Multiply => Key::NumPadMultiply,
-        K::Subtract => Key::NumPadMinus,
-        K::Add => Key::NumPadPlus,
+        K::NumpadDivide => Key::NumPadDivide,
+        K::NumpadMultiply => Key::NumPadMultiply,
+        K::NumpadSubtract => Key::NumPadMinus,
+        K::NumpadAdd => Key::NumPadPlus,
         K::NumpadEnter => Key::NumPadEnter,
         K::NumpadEquals => Key::NumPadEquals,
         K::LShift => Key::LShift,
@@ -740,6 +740,7 @@ fn to_static_event(event: glutin::event::Event<UserEvent>) -> Option<glutin::eve
                 WE::ReceivedCharacter(c) => WE::ReceivedCharacter(c),
                 WE::Focused(b) => WE::Focused(b),
                 WE::KeyboardInput { device_id, input, is_synthetic } => WE::KeyboardInput { device_id, input, is_synthetic },
+                WE::ModifiersChanged(_) => return None, // XXX?
                 #[allow(deprecated)]
                 WE::CursorMoved { device_id, position, modifiers } => WE::CursorMoved { device_id, position, modifiers },
                 WE::CursorEntered { device_id } => WE::CursorEntered { device_id },
