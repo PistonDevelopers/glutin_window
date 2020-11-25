@@ -533,8 +533,9 @@ impl OpenGLWindow for GlutinWindow {
         self.ctx.is_current()
     }
 
+    #[allow(invalid_value)]
     fn make_current(&mut self) {
-        use std::mem::{replace, zeroed, forget};
+        use std::mem::{replace, forget};
 
         let ctx = replace(&mut self.ctx, unsafe { MaybeUninit::<glutin::ContextWrapper<glutin::PossiblyCurrent, glutin::Window>>::zeroed().assume_init() });
         forget(replace(&mut self.ctx, unsafe {ctx.make_current().unwrap()}));
