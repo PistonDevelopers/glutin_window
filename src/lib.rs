@@ -535,7 +535,8 @@ impl OpenGLWindow for GlutinWindow {
     fn make_current(&mut self) {
         unsafe {
             let ctx = std::ptr::read(&self.ctx);
-            match ctx.make_current() {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.make_current())).unwrap_or_else(|_| std::process::abort());
+            match result {
                 Ok(ctx) => {
                     std::ptr::write(&mut self.ctx, ctx);
                 }
