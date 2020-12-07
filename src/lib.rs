@@ -41,7 +41,6 @@ use std::time::Duration;
 use std::thread;
 
 pub use shader_version::OpenGL;
-use std::mem::MaybeUninit;
 
 /// Contains stuff for game window.
 pub struct GlutinWindow {
@@ -533,12 +532,19 @@ impl OpenGLWindow for GlutinWindow {
         self.ctx.is_current()
     }
 
-    #[allow(invalid_value)]
     fn make_current(&mut self) {
-        use std::mem::{replace, forget};
-
-        let ctx = replace(&mut self.ctx, unsafe { MaybeUninit::<glutin::ContextWrapper<glutin::PossiblyCurrent, glutin::Window>>::zeroed().assume_init() });
-        forget(replace(&mut self.ctx, unsafe {ctx.make_current().unwrap()}));
+        unsafe {
+            let ctx = std::ptr::read(&self.ctx);
+            match ctx.make_current() {
+                Ok(ctx) => {
+                    std::ptr::write(&mut self.ctx, ctx);
+                }
+                Err((ctx, e)) => {
+                    std::ptr::write(&mut self.ctx, ctx);
+                    panic!("Failed to make context current: {:?}", e);
+                }
+            }
+        }
     }
 }
 
