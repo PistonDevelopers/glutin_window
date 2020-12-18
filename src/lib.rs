@@ -276,6 +276,17 @@ impl GlutinWindow {
         None
     }
 
+    /// Some playforms (MacOS and Wayland) require the context to resize on
+    /// window resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
+    #[cfg(target_os = "macos")]
+    fn requires_context_resize() -> bool {
+        true
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn requires_context_resize() -> bool {
+        false
+    }
+
     /// Convert an incoming Glutin event to Piston input.
     /// Update cursor state if necessary.
     ///
@@ -299,6 +310,12 @@ impl GlutinWindow {
                 event: WE::Resized(size), ..
             }) => {
                 let draw_size = self.draw_size();
+                if Self::requires_context_resize() {
+                    self.ctx.resize(glutin::dpi::PhysicalSize {
+                        width: draw_size.width,
+                        height: draw_size.height
+                    });
+                }
                 Some(Input::Resize(ResizeArgs {
                     window_size: [size.width, size.height],
                     draw_size: draw_size.into(),
