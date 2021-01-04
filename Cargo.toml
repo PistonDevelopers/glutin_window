@@ -15,8 +15,8 @@ name = "glutin_window"
 path = "src/lib.rs"
 
 [dependencies]
-gl = "0.11.0"
-glutin = "0.21.0"
+gl = "0.13.0"
+glutin = "0.25.0"
 pistoncore-input = "1.0.0"
 pistoncore-window = "0.47.0"
 shader_version = "0.7.0"
