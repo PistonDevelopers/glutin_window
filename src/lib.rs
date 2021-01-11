@@ -37,7 +37,7 @@ use window::{
     UnsupportedGraphicsApiError,
 };
 use glutin::GlRequest;
-use glutin::platform::desktop::EventLoopExtDesktop;
+use glutin::platform::run_return::EventLoopExtRunReturn;
 use std::time::Duration;
 use std::thread;
 
