@@ -327,8 +327,8 @@ impl GlutinWindow {
                 // resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
                 #[cfg(target_os = "macos")]
                 self.ctx.resize(glutin::dpi::PhysicalSize {
-                    width: draw_size.width,
-                    height: draw_size.height
+                    width: draw_size.width as u32,
+                    height: draw_size.height as u32
                 });
                 
                 Some(Input::Resize(ResizeArgs {
