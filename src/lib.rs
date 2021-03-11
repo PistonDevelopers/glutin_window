@@ -243,6 +243,8 @@ impl GlutinWindow {
                 if let Some(E::WindowEvent {
                     event: WE::CursorMoved{ position, ..}, ..
                 }) = ev {
+                    let scale = self.ctx.window().scale_factor();
+                    let position = position.to_logical::<f64>(scale);
                     // Ignore this event since mouse positions
                     // should not be emitted when capturing cursor.
                     self.last_cursor_pos = Some([position.x.into(), position.y.into()]);
@@ -390,6 +392,9 @@ impl GlutinWindow {
                 use glutin::event::TouchPhase;
                 use input::{Touch, TouchArgs};
 
+                let scale = self.ctx.window().scale_factor();
+                let location = location.to_logical::<f64>(scale);
+                
                 Some(Input::Move(Motion::Touch(TouchArgs::new(
                     0, id as i64, [location.x, location.y], 1.0, match phase {
                         TouchPhase::Started => Touch::Start,
@@ -402,6 +407,8 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::CursorMoved{position, ..}, ..
             }) => {
+                let scale = self.ctx.window().scale_factor();
+                let position = position.to_logical::<f64>(scale);
                 let x = f64::from(position.x);
                 let y = f64::from(position.y);
 
@@ -429,7 +436,11 @@ impl GlutinWindow {
             }) => Some(Input::Cursor(false)),
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(pos), ..}, ..
-            }) => Some(Input::Move(Motion::MouseScroll([pos.x as f64, pos.y as f64]))),
+            }) => {
+                let scale = self.ctx.window().scale_factor();
+                let pos = pos.to_logical::<f64>(scale);
+                Some(Input::Move(Motion::MouseScroll([pos.x as f64, pos.y as f64])))
+            }
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
             }) => Some(Input::Move(Motion::MouseScroll([x as f64, y as f64]))),
