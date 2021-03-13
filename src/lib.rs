@@ -321,17 +321,14 @@ impl GlutinWindow {
                 None
             }
             Some(E::WindowEvent {
-                event: WE::Resized(size), ..
+                event: WE::Resized(draw_size), ..
             }) => {
-                let draw_size = self.draw_size();
+                let size = self.size();
                 
                 // Some platforms (MacOS and Wayland) require the context to resize on window
                 // resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
                 #[cfg(target_os = "macos")]
-                self.ctx.resize(glutin::dpi::PhysicalSize {
-                    width: draw_size.width as u32,
-                    height: draw_size.height as u32
-                });
+                self.ctx.resize(draw_size);
                 
                 Some(Input::Resize(ResizeArgs {
                     window_size: [size.width.into(), size.height.into()],
