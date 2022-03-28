@@ -331,7 +331,6 @@ impl GlutinWindow {
                 
                 // Some platforms (MacOS and Wayland) require the context to resize on window
                 // resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
-                #[cfg(target_os = "macos")]
                 self.ctx.resize(draw_size);
                 
                 Some(Input::Resize(ResizeArgs {
