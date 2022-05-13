@@ -76,7 +76,8 @@ fn window_builder_from_settings(settings: &WindowSettings) -> glutin::window::Wi
         .with_inner_size(size)
         .with_decorations(settings.get_decorated())
         .with_title(settings.get_title())
-        .with_resizable(settings.get_resizable());
+        .with_resizable(settings.get_resizable())
+        .with_transparent(settings.get_transparent());
     if settings.get_fullscreen() {
         let event_loop = glutin::event_loop::EventLoop::new();
         let monitor = event_loop.primary_monitor();
