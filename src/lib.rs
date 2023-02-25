@@ -4,8 +4,11 @@
 
 extern crate glutin;
 extern crate gl;
+extern crate glutin_winit;
 extern crate input;
+extern crate raw_window_handle;
 extern crate window;
+extern crate winit;
 extern crate shader_version;
 
 use std::collections::VecDeque;
@@ -36,8 +39,11 @@ use window::{
     Api,
     UnsupportedGraphicsApiError,
 };
-use glutin::GlRequest;
-use glutin::platform::run_return::EventLoopExtRunReturn;
+use winit::platform::run_return::EventLoopExtRunReturn;
+use glutin::context::PossiblyCurrentContextGlSurfaceAccessor;
+use glutin::context::PossiblyCurrentGlContext;
+use glutin::display::GlDisplay;
+use glutin::prelude::GlSurface;
 use std::time::Duration;
 use std::thread;
 
@@ -45,8 +51,14 @@ pub use shader_version::OpenGL;
 
 /// Contains stuff for game window.
 pub struct GlutinWindow {
+    /// The OpenGL context.
+    pub ctx: glutin::context::PossiblyCurrentContext,
+    /// The window surface.
+    pub surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
+    /// The graphics display.
+    pub display: glutin::display::Display,
     /// The window.
-    pub ctx: glutin::ContextWrapper<glutin::PossiblyCurrent, glutin::window::Window>,
+    pub window: winit::window::Window,
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
@@ -64,32 +76,30 @@ pub struct GlutinWindow {
     // Used to filter repeated key presses (does not affect text repeat).
     last_key_pressed: Option<input::Key>,
     // Polls events from window.
-    event_loop: glutin::event_loop::EventLoop<UserEvent>,
+    event_loop: winit::event_loop::EventLoop<UserEvent>,
     // Stores list of events ready for processing.
-    events: VecDeque<glutin::event::Event<'static, UserEvent>>,
+    events: VecDeque<winit::event::Event<'static, UserEvent>>,
 }
 
-fn window_builder_from_settings(settings: &WindowSettings) -> glutin::window::WindowBuilder {
+fn window_builder_from_settings(settings: &WindowSettings) -> winit::window::WindowBuilder {
     let Size { width, height } = settings.get_size();
-    let size = glutin::dpi::LogicalSize { width, height };
-    let mut builder = glutin::window::WindowBuilder::new()
+    let size = winit::dpi::LogicalSize { width, height };
+    let mut builder = winit::window::WindowBuilder::new()
         .with_inner_size(size)
         .with_decorations(settings.get_decorated())
         .with_title(settings.get_title())
         .with_resizable(settings.get_resizable())
         .with_transparent(settings.get_transparent());
     if settings.get_fullscreen() {
-        let event_loop = glutin::event_loop::EventLoop::new();
+        let event_loop = winit::event_loop::EventLoop::new();
         let monitor = event_loop.primary_monitor();
-        let fullscreen = glutin::window::Fullscreen::Borderless(monitor);
+        let fullscreen = winit::window::Fullscreen::Borderless(monitor);
         builder = builder.with_fullscreen(Some(fullscreen));
     }
     builder
 }
 
-fn context_builder_from_settings(
-    settings: &WindowSettings
-) -> Result<glutin::ContextBuilder<glutin::NotCurrent>, Box<dyn Error>> {
+fn graphics_api_from_settings(settings: &WindowSettings) -> Result<Api, Box<dyn Error>> {
     let api = settings.get_maybe_graphics_api().unwrap_or(Api::opengl(3, 2));
     if api.api != "OpenGL" {
         return Err(UnsupportedGraphicsApiError {
@@ -97,77 +107,122 @@ fn context_builder_from_settings(
             expected: vec!["OpenGL".into()]
         }.into());
     };
-    let mut builder = glutin::ContextBuilder::new()
-        .with_gl(GlRequest::GlThenGles {
-            opengl_version: (api.major as u8, api.minor as u8),
-            opengles_version: (api.major as u8, api.minor as u8),
-        })
-        .with_srgb(settings.get_srgb());
+    Ok(api)
+}
+
+fn surface_attributes_builder_from_settings(
+    settings: &WindowSettings
+) -> glutin::surface::SurfaceAttributesBuilder<glutin::surface::WindowSurface> {
+    glutin::surface::SurfaceAttributesBuilder::<glutin::surface::WindowSurface>::new()
+        .with_srgb(Some(settings.get_srgb()))
+}
+
+fn config_template_builder_from_settings(
+    settings: &WindowSettings
+) -> glutin::config::ConfigTemplateBuilder {
+    let x = glutin::config::ConfigTemplateBuilder::new()
+        .with_transparency(settings.get_transparent());
     let samples = settings.get_samples();
-    if settings.get_vsync() {
-        builder = builder.with_vsync(true);
+    if samples == 0 {x} else {
+        x.with_multisampling(samples)
     }
-    if samples != 0 {
-        builder = builder.with_multisampling(samples as u16);
-    }
-    Ok(builder)
 }
 
 impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
     pub fn new(settings: &WindowSettings) -> Result<Self, Box<dyn Error>> {
-        let event_loop = glutin::event_loop::EventLoop::with_user_event();
-        let title = settings.get_title();
-        let exit_on_esc = settings.get_exit_on_esc();
+        let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
         let window_builder = window_builder_from_settings(&settings);
-        let context_builder = context_builder_from_settings(&settings)?;
-        let ctx = context_builder.build_windowed(window_builder, &event_loop);
-        let ctx = match ctx {
-                Ok(ctx) => ctx,
-                Err(_) => {
-                    let settings = settings.clone().samples(0);
-                    let window_builder = window_builder_from_settings(&settings);
-                    let context_builder = context_builder_from_settings(&settings)?;
-                    let ctx = context_builder.build_windowed(window_builder, &event_loop)?;
-                    ctx
-                }
-            };
-        let ctx = unsafe { ctx.make_current().map_err(|(_, err)| err)? };
-
-        // Load the OpenGL function pointers.
-        gl::load_with(|s| ctx.get_proc_address(s) as *const _);
-
-        Ok(GlutinWindow {
-            ctx,
-            title,
-            exit_on_esc,
-            should_close: false,
-            automatic_close: settings.get_automatic_close(),
-            cursor_pos: None,
-            is_capturing_cursor: false,
-            last_cursor_pos: None,
-            mouse_relative: None,
-            last_key_pressed: None,
-            event_loop,
-            events: VecDeque::new(),
-        })
+        Self::from_raw(settings, event_loop, window_builder)
     }
-    
+
     /// Creates a game window from a pre-existing Glutin event loop and window builder.
-    pub fn from_raw(settings: &WindowSettings, event_loop: glutin::event_loop::EventLoop<UserEvent>, window_builder: glutin::window::WindowBuilder) -> Result<Self, Box<dyn Error>> {
+    pub fn from_raw(
+        settings: &WindowSettings,
+        event_loop: winit::event_loop::EventLoop<UserEvent>,
+        window_builder: winit::window::WindowBuilder
+    ) -> Result<Self, Box<dyn Error>> {
+        use glutin::display::GetGlDisplay;
+        use glutin::config::GlConfig;
+        use glutin::context::ContextApi;
+        use glutin::context::NotCurrentGlContextSurfaceAccessor;
+        use raw_window_handle::HasRawWindowHandle;
+        use std::num::NonZeroU32;
+
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
-        
-        let context_builder = context_builder_from_settings(&settings)?;
-        let ctx = context_builder.build_windowed(window_builder, &event_loop)?;
-        let ctx = unsafe { ctx.make_current().map_err(|(_, err)| err)? };
+
+        let template = config_template_builder_from_settings(settings);
+        let display_builder = glutin_winit::DisplayBuilder::new()
+            .with_window_builder(Some(window_builder));
+        let (window, gl_config) = display_builder
+            .build(&event_loop, template, |configs| {
+                configs.reduce(|accum, config| {
+                    let transparency_check = config.supports_transparency().unwrap_or(false)
+                        & !accum.supports_transparency().unwrap_or(false);
+
+                    if transparency_check || config.num_samples() > accum.num_samples() {
+                        config
+                    } else {
+                        accum
+                    }
+                })
+                .unwrap()
+            })?;
+        let window = window.unwrap();
+        let raw_window_handle = window.raw_window_handle();
+        let draw_size = window.inner_size();
+        let dw = NonZeroU32::new(draw_size.width).unwrap();
+        let dh = NonZeroU32::new(draw_size.height).unwrap();
+        let surface_attributes = surface_attributes_builder_from_settings(settings)
+            .build(raw_window_handle, dw, dh);
+
+        let display: glutin::display::Display = gl_config.display();
+        let surface = unsafe {display.create_window_surface(&gl_config, &surface_attributes)?};
+
+        let api = graphics_api_from_settings(settings)?;
+        let context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(api.major as u8, api.minor as u8))))
+            .build(Some(raw_window_handle));
+
+        let fallback_context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(ContextApi::Gles(None))
+            .build(Some(raw_window_handle));
+
+        let legacy_context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(2, 1))))
+            .build(Some(raw_window_handle));
+
+        let mut not_current_gl_context = Some(unsafe {
+            if let Ok(x) = display.create_context(&gl_config, &context_attributes) {x}
+            else if let Ok(x) = display.create_context(&gl_config, &fallback_context_attributes) {x}
+            else {
+                display.create_context(&gl_config, &legacy_context_attributes)?
+            }
+        });
+
+        let ctx: glutin::context::PossiblyCurrentContext = not_current_gl_context.take().unwrap()
+            .make_current(&surface)?;
+
+        if settings.get_vsync() {
+            surface.set_swap_interval(&ctx,
+                glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()))?;
+        }
 
         // Load the OpenGL function pointers.
-        gl::load_with(|s| ctx.get_proc_address(s) as *const _);
+        gl::load_with(|s| {
+            use std::ffi::CString;
+
+            let s = CString::new(s).expect("CString::new failed");
+            display.get_proc_address(&s) as *const _
+        });
 
         Ok(GlutinWindow {
             ctx,
+            display,
+            surface,
+            window,
             title,
             exit_on_esc,
             should_close: false,
@@ -194,7 +249,7 @@ impl GlutinWindow {
                     if let Some(event) = to_static_event(ev) {
                         events.push_back(event);
                     }
-                    *control_flow = glutin::event_loop::ControlFlow::Exit;
+                    *control_flow = winit::event_loop::ControlFlow::Exit;
                 });
             }
 
@@ -222,7 +277,7 @@ impl GlutinWindow {
                 if let Some(event) = to_static_event(ev) {
                     events.push_back(event);
                 }
-                *control_flow = glutin::event_loop::ControlFlow::Exit;
+                *control_flow = winit::event_loop::ControlFlow::Exit;
             });
         }
 
@@ -230,8 +285,8 @@ impl GlutinWindow {
     }
 
     fn poll_event(&mut self) -> Option<Event> {
-        use glutin::event::Event as E;
-        use glutin::event::WindowEvent as WE;
+        use winit::event::Event as E;
+        use winit::event::WindowEvent as WE;
 
         // Loop to skip unknown events.
         loop {
@@ -248,7 +303,7 @@ impl GlutinWindow {
                 if let Some(E::WindowEvent {
                     event: WE::CursorMoved{ position, ..}, ..
                 }) = ev {
-                    let scale = self.ctx.window().scale_factor();
+                    let scale = self.window.scale_factor();
                     let position = position.to_logical::<f64>(scale);
                     // Ignore this event since mouse positions
                     // should not be emitted when capturing cursor.
@@ -276,10 +331,10 @@ impl GlutinWindow {
         // Poll events currently in the queue, stopping when the queue is empty.
         let events = &mut self.events;
         self.event_loop.run_return(|ev, _, control_flow| {
-            *control_flow = glutin::event_loop::ControlFlow::Wait;
+            *control_flow = winit::event_loop::ControlFlow::Wait;
             if let Some(event) = to_static_event(ev) {
-                if event == glutin::event::Event::UserEvent(UserEvent::WakeUp) {
-                    *control_flow = glutin::event_loop::ControlFlow::Exit;
+                if event == winit::event::Event::UserEvent(UserEvent::WakeUp) {
+                    *control_flow = winit::event_loop::ControlFlow::Exit;
                 }
                 events.push_back(event);
             }
@@ -312,10 +367,10 @@ impl GlutinWindow {
     /// The `unknown` flag is set to `true` when the event is not recognized.
     /// This is used to poll another event to make the event loop logic sound.
     /// When `unknown` is `true`, the return value is `None`.
-    fn handle_event(&mut self, ev: Option<glutin::event::Event<UserEvent>>, unknown: &mut bool) -> Option<Input> {
-        use glutin::event::Event as E;
-        use glutin::event::WindowEvent as WE;
-        use glutin::event::MouseScrollDelta;
+    fn handle_event(&mut self, ev: Option<winit::event::Event<UserEvent>>, unknown: &mut bool) -> Option<Input> {
+        use winit::event::Event as E;
+        use winit::event::WindowEvent as WE;
+        use winit::event::MouseScrollDelta;
         use input::{ Key, Motion };
 
         match ev {
@@ -328,12 +383,16 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::Resized(draw_size), ..
             }) => {
+                use std::num::NonZeroU32;
+
                 let size = self.size();
-                
+
                 // Some platforms (MacOS and Wayland) require the context to resize on window
                 // resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
-                self.ctx.resize(draw_size);
-                
+                let dw = if let Some(x) = NonZeroU32::new(draw_size.width) {x} else {return None};
+                let dh = if let Some(x) = NonZeroU32::new(draw_size.height) {x} else {return None};
+                self.surface.resize(&self.ctx, dw, dh);
+
                 Some(Input::Resize(ResizeArgs {
                     window_size: [size.width.into(), size.height.into()],
                     draw_size: draw_size.into(),
@@ -358,8 +417,8 @@ impl GlutinWindow {
                 Some(Input::Focus(focused)),
             Some(E::WindowEvent {
                 event: WE::KeyboardInput{
-                    input: glutin::event::KeyboardInput{
-                        state: glutin::event::ElementState::Pressed,
+                    input: winit::event::KeyboardInput{
+                        state: winit::event::ElementState::Pressed,
                         virtual_keycode: Some(key), scancode, ..
                     }, ..
                 }, ..
@@ -383,8 +442,8 @@ impl GlutinWindow {
             },
             Some(E::WindowEvent {
                  event: WE::KeyboardInput{
-                     input: glutin::event::KeyboardInput{
-                         state: glutin::event::ElementState::Released,
+                     input: winit::event::KeyboardInput{
+                         state: winit::event::ElementState::Released,
                          virtual_keycode: Some(key), scancode, ..
                      }, ..
                  }, ..
@@ -402,14 +461,14 @@ impl GlutinWindow {
                 }))
             }
             Some(E::WindowEvent {
-                event: WE::Touch(glutin::event::Touch { phase, location, id, .. }), ..
+                event: WE::Touch(winit::event::Touch { phase, location, id, .. }), ..
             }) => {
-                use glutin::event::TouchPhase;
+                use winit::event::TouchPhase;
                 use input::{Touch, TouchArgs};
 
-                let scale = self.ctx.window().scale_factor();
+                let scale = self.window.scale_factor();
                 let location = location.to_logical::<f64>(scale);
-                
+
                 Some(Input::Move(Motion::Touch(TouchArgs::new(
                     0, id as i64, [location.x, location.y], 1.0, match phase {
                         TouchPhase::Started => Touch::Start,
@@ -422,7 +481,7 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::CursorMoved{position, ..}, ..
             }) => {
-                let scale = self.ctx.window().scale_factor();
+                let scale = self.window.scale_factor();
                 let position = position.to_logical::<f64>(scale);
                 let x = f64::from(position.x);
                 let y = f64::from(position.y);
@@ -452,7 +511,7 @@ impl GlutinWindow {
             Some(E::WindowEvent {
                 event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(pos), ..}, ..
             }) => {
-                let scale = self.ctx.window().scale_factor();
+                let scale = self.window.scale_factor();
                 let pos = pos.to_logical::<f64>(scale);
                 Some(Input::Move(Motion::MouseScroll([pos.x as f64, pos.y as f64])))
             }
@@ -460,14 +519,14 @@ impl GlutinWindow {
                 event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
             }) => Some(Input::Move(Motion::MouseScroll([x as f64, y as f64]))),
             Some(E::WindowEvent {
-                event: WE::MouseInput{state: glutin::event::ElementState::Pressed, button, ..}, ..
+                event: WE::MouseInput{state: winit::event::ElementState::Pressed, button, ..}, ..
             }) => Some(Input::Button(ButtonArgs {
                 state: ButtonState::Press,
                 button: Button::Mouse(map_mouse(button)),
                 scancode: None,
             })),
             Some(E::WindowEvent {
-                event: WE::MouseInput{state: glutin::event::ElementState::Released, button, ..}, ..
+                event: WE::MouseInput{state: winit::event::ElementState::Released, button, ..}, ..
             }) => Some(Input::Button(ButtonArgs {
                 state: ButtonState::Release,
                 button: Button::Mouse(map_mouse(button)),
@@ -505,8 +564,8 @@ impl GlutinWindow {
             let dx = cx - pos[0];
             let dy = cy - pos[1];
             if dx != 0.0 || dy != 0.0 {
-                let pos = glutin::dpi::LogicalPosition::new(cx, cy);
-                if let Ok(_) = self.ctx.window().set_cursor_position(pos) {
+                let pos = winit::dpi::LogicalPosition::new(cx, cy);
+                if let Ok(_) = self.window.set_cursor_position(pos) {
                     self.last_cursor_pos = Some([cx, cy]);
                 }
             }
@@ -516,18 +575,18 @@ impl GlutinWindow {
 
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
-        let size = self.ctx.window()
+        let size = self.window
             .inner_size()
-            .to_logical::<u32>(self.ctx.window().scale_factor());
+            .to_logical::<u32>(self.window.scale_factor());
         (size.width, size.height).into()
     }
     fn draw_size(&self) -> Size {
-        let size = self.ctx.window().inner_size();
+        let size = self.window.inner_size();
         (size.width, size.height).into()
     }
     fn should_close(&self) -> bool { self.should_close }
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
-    fn swap_buffers(&mut self) { let _ = self.ctx.swap_buffers(); }
+    fn swap_buffers(&mut self) { let _ = self.surface.swap_buffers(&self.ctx); }
     fn wait_event(&mut self) -> Event { self.wait_event() }
     fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Event> {
         self.wait_event_timeout(timeout)
@@ -546,7 +605,7 @@ impl AdvancedWindow for GlutinWindow {
     fn get_title(&self) -> String { self.title.clone() }
     fn set_title(&mut self, value: String) {
         self.title = value;
-        self.ctx.window().set_title(&self.title);
+        self.window.set_title(&self.title);
     }
     fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
     fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
@@ -558,34 +617,37 @@ impl AdvancedWindow for GlutinWindow {
         // the capturing of cursor is faked by hiding the cursor
         // and setting the position to the center of window.
         self.is_capturing_cursor = value;
-        self.ctx.window().set_cursor_visible(!value);
+        self.window.set_cursor_visible(!value);
         if value {
             self.fake_capture();
         }
     }
-    fn show(&mut self) { self.ctx.window().set_visible(true); }
-    fn hide(&mut self) { self.ctx.window().set_visible(false); }
+    fn show(&mut self) { self.window.set_visible(true); }
+    fn hide(&mut self) { self.window.set_visible(false); }
     fn get_position(&self) -> Option<Position> {
-        let pos = self.ctx.window().outer_position().ok()?;
-        let scale = self.ctx.window().scale_factor();
-        let glutin::dpi::LogicalPosition { x, y } = pos.to_logical(scale);
+        let pos = self.window.outer_position().ok()?;
+        let scale = self.window.scale_factor();
+        let winit::dpi::LogicalPosition { x, y } = pos.to_logical(scale);
         Some(Position { x, y })
     }
     fn set_position<P: Into<Position>>(&mut self, pos: P) {
         let Position { x, y } = pos.into();
-        let pos = glutin::dpi::LogicalPosition { x, y };
-        self.ctx.window().set_outer_position(pos);
+        let pos = winit::dpi::LogicalPosition { x, y };
+        self.window.set_outer_position(pos);
     }
     fn set_size<S: Into<Size>>(&mut self, size: S) {
         let Size { width, height } = size.into();
-        let size = glutin::dpi::LogicalSize { width, height };
-        self.ctx.window().set_inner_size(size);
+        let size = winit::dpi::LogicalSize { width, height };
+        self.window.set_inner_size(size);
     }
 }
 
 impl OpenGLWindow for GlutinWindow {
     fn get_proc_address(&mut self, proc_name: &str) -> ProcAddress {
-        self.ctx.get_proc_address(proc_name) as *const _
+        use std::ffi::CString;
+
+        let s = CString::new(proc_name).expect("CString::new failed");
+        self.display.get_proc_address(&s) as *const _
     }
 
     fn is_current(&self) -> bool {
@@ -593,26 +655,14 @@ impl OpenGLWindow for GlutinWindow {
     }
 
     fn make_current(&mut self) {
-        unsafe {
-            let ctx = std::ptr::read(&self.ctx);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.make_current())).unwrap_or_else(|_| std::process::abort());
-            match result {
-                Ok(ctx) => {
-                    std::ptr::write(&mut self.ctx, ctx);
-                }
-                Err((ctx, e)) => {
-                    std::ptr::write(&mut self.ctx, ctx);
-                    panic!("Failed to make context current: {:?}", e);
-                }
-            }
-        }
+        let _ = self.ctx.make_current(&self.surface);
     }
 }
 
 /// Maps Glutin's key to Piston's key.
-pub fn map_key(keycode: glutin::event::VirtualKeyCode) -> keyboard::Key {
+pub fn map_key(keycode: winit::event::VirtualKeyCode) -> keyboard::Key {
     use input::keyboard::Key;
-    use glutin::event::VirtualKeyCode as K;
+    use winit::event::VirtualKeyCode as K;
 
     match keycode {
         K::Key0 => Key::D0,
@@ -740,8 +790,8 @@ pub fn map_key(keycode: glutin::event::VirtualKeyCode) -> keyboard::Key {
 }
 
 /// Maps Glutin's mouse button to Piston's mouse button.
-pub fn map_mouse(mouse_button: glutin::event::MouseButton) -> MouseButton {
-    use glutin::event::MouseButton as M;
+pub fn map_mouse(mouse_button: winit::event::MouseButton) -> MouseButton {
+    use winit::event::MouseButton as M;
 
     match mouse_button {
         M::Left => MouseButton::Left,
@@ -765,9 +815,9 @@ pub enum UserEvent {
 
 // XXX Massive Hack XXX: `wait_event` and `wait_event_timeout` can't handle non-'static events, so
 // they need to ignore events like `WindowEvent::ScaleFactorChanged` that contain references.
-fn to_static_event(event: glutin::event::Event<UserEvent>) -> Option<glutin::event::Event<'static, UserEvent>> {
-    use glutin::event::Event as E;
-    use glutin::event::WindowEvent as WE;
+fn to_static_event(event: winit::event::Event<UserEvent>) -> Option<winit::event::Event<'static, UserEvent>> {
+    use winit::event::Event as E;
+    use winit::event::WindowEvent as WE;
     let event = match event {
         E::NewEvents(s) => E::NewEvents(s),
         E::WindowEvent { window_id, event } => E::WindowEvent {
@@ -797,6 +847,11 @@ fn to_static_event(event: glutin::event::Event<UserEvent>) -> Option<glutin::eve
                 WE::Touch(touch) => WE::Touch(touch),
                 WE::ScaleFactorChanged { .. } => return None,
                 WE::ThemeChanged(theme) => WE::ThemeChanged(theme),
+                WE::Ime(_) => return None,
+                WE::TouchpadMagnify { .. } => return None,
+                WE::TouchpadRotate { .. } => return None,
+                WE::Occluded(_) => return None,
+                WE::SmartMagnify { .. } => return None,
             },
         },
         E::DeviceEvent { device_id, event } => E::DeviceEvent { device_id, event },
