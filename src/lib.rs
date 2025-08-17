@@ -701,7 +701,7 @@ pub fn map_key(keycode: winit::event::VirtualKeyCode) -> keyboard::Key {
         K::X => Key::X,
         K::Y => Key::Y,
         K::Z => Key::Z,
-        K::Apostrophe => Key::Unknown,
+        K::Apostrophe => Key::Quote,
         K::Backslash => Key::Backslash,
         K::Back => Key::Backspace,
         // K::CapsLock => Key::CapsLock,
