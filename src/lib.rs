@@ -81,7 +81,7 @@ pub struct GlutinWindow {
     events: VecDeque<winit::event::Event<'static, UserEvent>>,
 }
 
-fn window_builder_from_settings(settings: &WindowSettings) -> winit::window::WindowBuilder {
+fn window_builder_from_settings(settings: &WindowSettings, event_loop: &winit::event_loop::EventLoop<UserEvent>) -> winit::window::WindowBuilder {
     let Size { width, height } = settings.get_size();
     let size = winit::dpi::LogicalSize { width, height };
     let mut builder = winit::window::WindowBuilder::new()
@@ -91,7 +91,6 @@ fn window_builder_from_settings(settings: &WindowSettings) -> winit::window::Win
         .with_resizable(settings.get_resizable())
         .with_transparent(settings.get_transparent());
     if settings.get_fullscreen() {
-        let event_loop = winit::event_loop::EventLoop::new();
         let monitor = event_loop.primary_monitor();
         let fullscreen = winit::window::Fullscreen::Borderless(monitor);
         builder = builder.with_fullscreen(Some(fullscreen));
@@ -133,7 +132,7 @@ impl GlutinWindow {
     /// Creates a new game window for Glutin.
     pub fn new(settings: &WindowSettings) -> Result<Self, Box<dyn Error>> {
         let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
-        let window_builder = window_builder_from_settings(&settings);
+        let window_builder = window_builder_from_settings(&settings, &event_loop);
         Self::from_raw(settings, event_loop, window_builder)
     }
 
