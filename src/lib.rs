@@ -10,21 +10,24 @@ extern crate raw_window_handle;
 extern crate window;
 extern crate winit;
 extern crate shader_version;
+extern crate rustc_hash;
+
+use rustc_hash::FxHashMap;
 
 use std::collections::VecDeque;
 use std::error::Error;
 
 // External crates.
 use input::{
-    keyboard,
     ButtonArgs,
     ButtonState,
     CloseArgs,
     Event,
+    Key,
+    Motion,
     MouseButton,
     Button,
     Input,
-    FileDrag,
     ResizeArgs,
 };
 use window::{
@@ -39,26 +42,99 @@ use window::{
     Api,
     UnsupportedGraphicsApiError,
 };
-use winit::platform::run_return::EventLoopExtRunReturn;
-use glutin::context::PossiblyCurrentContextGlSurfaceAccessor;
+use winit::{
+    application::ApplicationHandler,
+    dpi::{LogicalPosition, LogicalSize},
+    event_loop::{ActiveEventLoop, EventLoop},
+    event::{DeviceId, ElementState, MouseScrollDelta, WindowEvent},
+    window::WindowId,
+};
 use glutin::context::PossiblyCurrentGlContext;
 use glutin::display::GlDisplay;
 use glutin::prelude::GlSurface;
 use std::time::Duration;
-use std::thread;
+use std::sync::Arc;
 
 pub use shader_version::OpenGL;
+
+
+/// Settings for whether to ignore modifiers and use standard keyboard layouts instead.
+///
+/// This does not affect `piston::input::TextEvent`.
+///
+/// Piston uses the same key codes as in SDL2.
+/// The problem is that without knowing the keyboard layout,
+/// there is no coherent way of generating key codes.
+///
+/// This option choose different tradeoffs depending on need.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum KeyboardIgnoreModifiers {
+    /// Keep the key codes that are affected by modifiers.
+    ///
+    /// This is a good default for most applications.
+    /// However, make sure to display understandable information to the user.
+    ///
+    /// If you experience user problems among gamers,
+    /// then you might consider allowing other options in your game engine.
+    /// Some gamers might be used to how stuff works in other traditional game engines
+    /// and struggle understanding this configuration, depending on how you use keyboard layout.
+    None,
+    /// Assume the user's keyboard layout is standard English ABC.
+    ///
+    /// In some non-English speaking countries, this might be more user friendly for some gamers.
+    ///
+    /// This might sound counter-intuitive at first, so here is the reason:
+    ///
+    /// Gamers can customize their keyboard layout without needing to understand scan codes.
+    /// When gamers want physically accuracy with good default options,
+    /// they can simply use standard English ABC.
+    ///
+    /// In other cases, this option displays understandable information for game instructions.
+    /// This information makes it easier for users to correct the problem themselves.
+    ///
+    /// Most gaming consoles use standard controllers.
+    /// Typically, the only device that might be problematic for users is the keyboard.
+    /// Instead of solving this problem in your game engine, let users do it in the OS.
+    ///
+    /// This option gives more control to users and is also better for user data privacy.
+    /// Detecting keyboard layout is usually not needed.
+    /// Instead, provide options for the user where they can modify the keys.
+    /// If users want to switch layout in the middle of a game, they can do it through the OS.
+    AbcKeyCode,
+}
 
 /// Contains stuff for game window.
 pub struct GlutinWindow {
     /// The OpenGL context.
-    pub ctx: glutin::context::PossiblyCurrentContext,
+    pub ctx: Option<glutin::context::PossiblyCurrentContext>,
     /// The window surface.
-    pub surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
+    pub surface: Option<glutin::surface::Surface<glutin::surface::WindowSurface>>,
     /// The graphics display.
-    pub display: glutin::display::Display,
-    /// The window.
-    pub window: winit::window::Window,
+    pub display: Option<glutin::display::Display>,
+    /// The event loop of the window.
+    ///
+    /// This is optional because when pumping events using `ApplicationHandler`,
+    /// the event loop can not be owned by `WinitWindow`.
+    pub event_loop: Option<EventLoop<UserEvent>>,
+    /// Sets keyboard layout.
+    ///
+    /// When set, the key codes are
+    pub keyboard_ignore_modifiers: KeyboardIgnoreModifiers,
+    /// The Winit window.
+    ///
+    /// This is optional because when creating the window,
+    /// it is only accessible by `ActiveEventLoop::create_window`,
+    /// which in turn requires `ApplicationHandler`.
+    /// One call to `Window::pull_event` is needed to trigger
+    /// Winit to call `ApplicationHandler::request_redraw`,
+    /// which creates the window.
+    pub window: Option<Arc<winit::window::Window>>,
+    /// Keeps track of connected devices.
+    pub devices: u32,
+    /// Maps device id to a unique id used by Piston.
+    pub device_id_map: FxHashMap<DeviceId, u32>,
+    // The window settings that created the window.
+    settings: WindowSettings,
     // The back-end does not remember the title.
     title: String,
     exit_on_esc: bool,
@@ -75,28 +151,8 @@ pub struct GlutinWindow {
     cursor_pos: Option<[f64; 2]>,
     // Used to filter repeated key presses (does not affect text repeat).
     last_key_pressed: Option<input::Key>,
-    // Polls events from window.
-    event_loop: winit::event_loop::EventLoop<UserEvent>,
     // Stores list of events ready for processing.
-    events: VecDeque<winit::event::Event<'static, UserEvent>>,
-}
-
-fn window_builder_from_settings(settings: &WindowSettings) -> winit::window::WindowBuilder {
-    let Size { width, height } = settings.get_size();
-    let size = winit::dpi::LogicalSize { width, height };
-    let mut builder = winit::window::WindowBuilder::new()
-        .with_inner_size(size)
-        .with_decorations(settings.get_decorated())
-        .with_title(settings.get_title())
-        .with_resizable(settings.get_resizable())
-        .with_transparent(settings.get_transparent());
-    if settings.get_fullscreen() {
-        let event_loop = winit::event_loop::EventLoop::new();
-        let monitor = event_loop.primary_monitor();
-        let fullscreen = winit::window::Fullscreen::Borderless(monitor);
-        builder = builder.with_fullscreen(Some(fullscreen));
-    }
-    builder
+    events: VecDeque<Event>,
 }
 
 fn graphics_api_from_settings(settings: &WindowSettings) -> Result<Api, Box<dyn Error>> {
@@ -132,99 +188,26 @@ impl GlutinWindow {
 
     /// Creates a new game window for Glutin.
     pub fn new(settings: &WindowSettings) -> Result<Self, Box<dyn Error>> {
-        let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
-        let window_builder = window_builder_from_settings(&settings);
-        Self::from_raw(settings, event_loop, window_builder)
+        let event_loop = winit::event_loop::EventLoop::with_user_event().build()?;
+        Self::from_event_loop(settings, event_loop)
     }
 
-    /// Creates a game window from a pre-existing Glutin event loop and window builder.
-    pub fn from_raw(
+    /// Creates a game window from a pre-existing Glutin event loop.
+    pub fn from_event_loop(
         settings: &WindowSettings,
         event_loop: winit::event_loop::EventLoop<UserEvent>,
-        window_builder: winit::window::WindowBuilder
     ) -> Result<Self, Box<dyn Error>> {
-        use glutin::display::GetGlDisplay;
-        use glutin::config::GlConfig;
-        use glutin::context::ContextApi;
-        use glutin::context::NotCurrentGlContextSurfaceAccessor;
-        use raw_window_handle::HasRawWindowHandle;
-        use std::num::NonZeroU32;
-
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
 
-        let template = config_template_builder_from_settings(settings);
-        let display_builder = glutin_winit::DisplayBuilder::new()
-            .with_window_builder(Some(window_builder));
-        let (window, gl_config) = display_builder
-            .build(&event_loop, template, |configs| {
-                configs.reduce(|accum, config| {
-                    let transparency_check = config.supports_transparency().unwrap_or(false)
-                        & !accum.supports_transparency().unwrap_or(false);
-
-                    if transparency_check || config.num_samples() > accum.num_samples() {
-                        config
-                    } else {
-                        accum
-                    }
-                })
-                .unwrap()
-            })?;
-        let window = window.unwrap();
-        let raw_window_handle = window.raw_window_handle();
-        let draw_size = window.inner_size();
-        let dw = NonZeroU32::new(draw_size.width).unwrap();
-        let dh = NonZeroU32::new(draw_size.height).unwrap();
-        let surface_attributes = surface_attributes_builder_from_settings(settings)
-            .build(raw_window_handle, dw, dh);
-
-        let display: glutin::display::Display = gl_config.display();
-        let surface = unsafe {display.create_window_surface(&gl_config, &surface_attributes)?};
-
-        let api = graphics_api_from_settings(settings)?;
-        let context_attributes = glutin::context::ContextAttributesBuilder::new()
-            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(api.major as u8, api.minor as u8))))
-            .build(Some(raw_window_handle));
-
-        let fallback_context_attributes = glutin::context::ContextAttributesBuilder::new()
-            .with_context_api(ContextApi::Gles(None))
-            .build(Some(raw_window_handle));
-
-        let legacy_context_attributes = glutin::context::ContextAttributesBuilder::new()
-            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(2, 1))))
-            .build(Some(raw_window_handle));
-
-        let mut not_current_gl_context = Some(unsafe {
-            if let Ok(x) = display.create_context(&gl_config, &context_attributes) {x}
-            else if let Ok(x) = display.create_context(&gl_config, &fallback_context_attributes) {x}
-            else {
-                display.create_context(&gl_config, &legacy_context_attributes)?
-            }
-        });
-
-        let ctx: glutin::context::PossiblyCurrentContext = not_current_gl_context.take().unwrap()
-            .make_current(&surface)?;
-
-        if settings.get_vsync() {
-            surface.set_swap_interval(&ctx,
-                glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()))?;
-        }
-
-        // Load the OpenGL function pointers.
-        gl::load_with(|s| {
-            use std::ffi::CString;
-
-            let s = CString::new(s).expect("CString::new failed");
-            display.get_proc_address(&s) as *const _
-        });
-
         Ok(GlutinWindow {
-            ctx,
-            display,
-            surface,
-            window,
+            ctx: None,
+            display: None,
+            surface: None,
+            window: None,
             title,
             exit_on_esc,
+            settings: settings.clone(),
             should_close: false,
             automatic_close: settings.get_automatic_close(),
             cursor_pos: None,
@@ -232,113 +215,25 @@ impl GlutinWindow {
             last_cursor_pos: None,
             mouse_relative: None,
             last_key_pressed: None,
-            event_loop,
+            event_loop: Some(event_loop),
+            keyboard_ignore_modifiers: KeyboardIgnoreModifiers::None,
             events: VecDeque::new(),
+
+            devices: 0,
+            device_id_map: FxHashMap::default(),
         })
     }
 
-    fn wait_event(&mut self) -> Event {
-        // First check for and handle any pending events.
-        if let Some(event) = self.poll_event() {
-            return event;
-        }
-        loop {
-            {
-                let ref mut events = self.events;
-                self.event_loop.run_return(|ev, _, control_flow| {
-                    if let Some(event) = to_static_event(ev) {
-                        events.push_back(event);
-                    }
-                    *control_flow = winit::event_loop::ControlFlow::Exit;
-                });
-            }
-
-            if let Some(event) = self.poll_event() {
-                return event;
-            }
-        }
+    /// Gets a reference to the window.
+    ///
+    /// This is faster than [get_window], but borrows self.
+    pub fn get_window_ref(&self) -> &winit::window::Window {
+        self.window.as_ref().unwrap()
     }
 
-    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Event> {
-        // First check for and handle any pending events.
-        if let Some(event) = self.poll_event() {
-            return Some(event);
-        }
-        // Schedule wake up when time is out.
-        let event_loop_proxy = self.event_loop.create_proxy();
-        thread::spawn(move || {
-            thread::sleep(timeout);
-            // `send_event` can fail only if the event loop went away.
-            event_loop_proxy.send_event(UserEvent::WakeUp).ok();
-        });
-        {
-            let ref mut events = self.events;
-            self.event_loop.run_return(|ev, _, control_flow| {
-                if let Some(event) = to_static_event(ev) {
-                    events.push_back(event);
-                }
-                *control_flow = winit::event_loop::ControlFlow::Exit;
-            });
-        }
-
-        self.poll_event()
-    }
-
-    fn poll_event(&mut self) -> Option<Event> {
-        use winit::event::Event as E;
-        use winit::event::WindowEvent as WE;
-
-        // Loop to skip unknown events.
-        loop {
-            let event = self.pre_pop_front_event();
-            if event.is_some() {return event.map(|x| Event::Input(x, None));}
-
-            if self.events.len() == 0 {
-                self.poll_events();
-            }
-            let mut ev = self.events.pop_front();
-
-            if self.is_capturing_cursor &&
-               self.last_cursor_pos.is_none() {
-                if let Some(E::WindowEvent {
-                    event: WE::CursorMoved{ position, ..}, ..
-                }) = ev {
-                    let scale = self.window.scale_factor();
-                    let position = position.to_logical::<f64>(scale);
-                    // Ignore this event since mouse positions
-                    // should not be emitted when capturing cursor.
-                    self.last_cursor_pos = Some([position.x.into(), position.y.into()]);
-
-                    if self.events.len() == 0 {
-                        self.poll_events();
-                    }
-                    ev = self.events.pop_front();
-                }
-            }
-
-            let mut unknown = false;
-            let event = self.handle_event(ev, &mut unknown);
-            if unknown {continue};
-            return event.map(|x| Event::Input(x, None));
-        }
-    }
-
-    fn poll_events(&mut self) {
-        // Ensure there's at least one event in the queue.
-        let event_loop_proxy = self.event_loop.create_proxy();
-        event_loop_proxy.send_event(UserEvent::WakeUp).ok();
-
-        // Poll events currently in the queue, stopping when the queue is empty.
-        let events = &mut self.events;
-        self.event_loop.run_return(|ev, _, control_flow| {
-            *control_flow = winit::event_loop::ControlFlow::Wait;
-            if let Some(event) = to_static_event(ev) {
-                if event == winit::event::Event::UserEvent(UserEvent::WakeUp) {
-                    *control_flow = winit::event_loop::ControlFlow::Exit;
-                }
-                events.push_back(event);
-            }
-        });
+    /// Returns a cloned smart pointer to the underlying Winit window.
+    pub fn get_window(&self) -> Arc<winit::window::Window> {
+        self.window.as_ref().unwrap().clone()
     }
 
     // These events are emitted before popping a new event from the queue.
@@ -361,198 +256,106 @@ impl GlutinWindow {
         None
     }
 
-    /// Convert an incoming Glutin event to Piston input.
+    /// Convert an incoming Winit event to Piston input.
     /// Update cursor state if necessary.
     ///
     /// The `unknown` flag is set to `true` when the event is not recognized.
     /// This is used to poll another event to make the event loop logic sound.
     /// When `unknown` is `true`, the return value is `None`.
-    fn handle_event(&mut self, ev: Option<winit::event::Event<UserEvent>>, unknown: &mut bool) -> Option<Input> {
-        use winit::event::Event as E;
-        use winit::event::WindowEvent as WE;
-        use winit::event::MouseScrollDelta;
-        use input::{ Key, Motion };
+    fn handle_event(
+        &mut self,
+        event: winit::event::WindowEvent,
+        unknown: &mut bool,
+    ) -> Option<Input> {
+        use winit::keyboard::{Key, NamedKey};
 
-        match ev {
-            None => {
-                if self.is_capturing_cursor {
-                    self.fake_capture();
-                }
-                None
-            }
-            Some(E::WindowEvent {
-                event: WE::Resized(draw_size), ..
-            }) => {
-                use std::num::NonZeroU32;
-
-                let size = self.size();
-
-                // Some platforms (MacOS and Wayland) require the context to resize on window
-                // resize. Check: https://github.com/PistonDevelopers/graphics/issues/1129
-                let dw = if let Some(x) = NonZeroU32::new(draw_size.width) {x} else {return None};
-                let dh = if let Some(x) = NonZeroU32::new(draw_size.height) {x} else {return None};
-                self.surface.resize(&self.ctx, dw, dh);
-
-                Some(Input::Resize(ResizeArgs {
-                    window_size: [size.width.into(), size.height.into()],
-                    draw_size: draw_size.into(),
-                }))
-            },
-            Some(E::WindowEvent {
-                event: WE::ReceivedCharacter(ch), ..
-            }) => {
-                let string = match ch {
-                    // Ignore control characters and return ascii for Text event (like sdl2).
-                    '\u{7f}' | // Delete
-                    '\u{1b}' | // Escape
-                    '\u{8}'  | // Backspace
-                    '\r' | '\n' | '\t' => "".to_string(),
-                    _ => ch.to_string()
-                };
-                Some(Input::Text(string))
-            },
-            Some(E::WindowEvent {
-                event: WE::Focused(focused), ..
-            }) =>
-                Some(Input::Focus(focused)),
-            Some(E::WindowEvent {
-                event: WE::KeyboardInput{
-                    input: winit::event::KeyboardInput{
-                        state: winit::event::ElementState::Pressed,
-                        virtual_keycode: Some(key), scancode, ..
-                    }, ..
-                }, ..
-            }) => {
-                let piston_key = map_key(key);
-                if let (true, Key::Escape) = (self.exit_on_esc, piston_key) {
-                    self.should_close = true;
-                }
-                if let Some(last_key) = self.last_key_pressed {
-                    if last_key == piston_key {
-                        *unknown = true;
+        match event {
+            WindowEvent::KeyboardInput { event: ref ev, .. } => {
+                if self.exit_on_esc {
+                    if let Key::Named(NamedKey::Escape) = ev.logical_key {
+                        self.set_should_close(true);
                         return None;
                     }
                 }
-                self.last_key_pressed = Some(piston_key);
-                Some(Input::Button(ButtonArgs {
-                    state: ButtonState::Press,
-                    button: Button::Keyboard(piston_key),
-                    scancode: Some(scancode as i32),
-                }))
-            },
-            Some(E::WindowEvent {
-                 event: WE::KeyboardInput{
-                     input: winit::event::KeyboardInput{
-                         state: winit::event::ElementState::Released,
-                         virtual_keycode: Some(key), scancode, ..
-                     }, ..
-                 }, ..
-             }) => {
-                let piston_key = map_key(key);
-                if let Some(last_key) = self.last_key_pressed {
-                    if last_key == piston_key {
-                        self.last_key_pressed = None;
+                if let Some(s) = &ev.text {
+                    let s = s.to_string();
+                    let repeat = ev.repeat;
+                    if !repeat {
+                        if let Some(input) = map_window_event(
+                            event,
+                            self.get_window_ref().scale_factor(),
+                            self.keyboard_ignore_modifiers,
+                            unknown,
+                            &mut self.last_key_pressed,
+                            &mut self.devices,
+                            &mut self.device_id_map,
+                        ) {
+                            self.events.push_back(Event::Input(input, None));
+                        }
                     }
+
+                    return Some(Input::Text(s));
                 }
-                Some(Input::Button(ButtonArgs {
-                    state: ButtonState::Release,
-                    button: Button::Keyboard(piston_key),
-                    scancode: Some(scancode as i32),
-                }))
             }
-            Some(E::WindowEvent {
-                event: WE::Touch(winit::event::Touch { phase, location, id, .. }), ..
-            }) => {
-                use winit::event::TouchPhase;
-                use input::{Touch, TouchArgs};
-
-                let scale = self.window.scale_factor();
-                let location = location.to_logical::<f64>(scale);
-
-                Some(Input::Move(Motion::Touch(TouchArgs::new(
-                    0, id as i64, [location.x, location.y], 1.0, match phase {
-                        TouchPhase::Started => Touch::Start,
-                        TouchPhase::Moved => Touch::Move,
-                        TouchPhase::Ended => Touch::End,
-                        TouchPhase::Cancelled => Touch::Cancel
-                    }
-                ))))
-            }
-            Some(E::WindowEvent {
-                event: WE::CursorMoved{position, ..}, ..
-            }) => {
-                let scale = self.window.scale_factor();
+            WindowEvent::CursorMoved { position, .. } => {
+                let scale = self.get_window_ref().scale_factor();
                 let position = position.to_logical::<f64>(scale);
                 let x = f64::from(position.x);
                 let y = f64::from(position.y);
 
-                if let Some(pos) = self.last_cursor_pos {
-                    let dx = x - pos[0];
-                    let dy = y - pos[1];
-                    if self.is_capturing_cursor {
+                let pre_event = self.pre_pop_front_event();
+                let mut input = || {
+                    if let Some(pos) = self.last_cursor_pos {
+                        let dx = x - pos[0];
+                        let dy = y - pos[1];
+                        if self.is_capturing_cursor {
+                            self.last_cursor_pos = Some([x, y]);
+                            self.fake_capture();
+                            // Skip normal mouse movement and emit relative motion only.
+                            return Some(Input::Move(Motion::MouseRelative([dx as f64, dy as f64])));
+                        }
+                        // Send relative mouse movement next time.
+                        self.mouse_relative = Some((dx as f64, dy as f64));
+                    } else if self.is_capturing_cursor {
+                        // Ignore this event since mouse positions
+                        // should not be emitted when capturing cursor.
                         self.last_cursor_pos = Some([x, y]);
-                        self.fake_capture();
-                        // Skip normal mouse movement and emit relative motion only.
-                        return Some(Input::Move(Motion::MouseRelative([dx as f64, dy as f64])));
+                        return None;
                     }
-                    // Send relative mouse movement next time.
-                    self.mouse_relative = Some((dx as f64, dy as f64));
-                }
 
-                self.last_cursor_pos = Some([x, y]);
-                Some(Input::Move(Motion::MouseCursor([x, y])))
+                    self.last_cursor_pos = Some([x, y]);
+                    return Some(Input::Move(Motion::MouseCursor([x, y])))
+                };
+
+                let input = input();
+                return if pre_event.is_some() {
+                    if let Some(input) = input {
+                        self.events.push_back(Event::Input(input, None));
+                    }
+                    pre_event
+                } else {input}
             }
-            Some(E::WindowEvent {
-                event: WE::CursorEntered{..}, ..
-            }) => Some(Input::Cursor(true)),
-            Some(E::WindowEvent {
-                event: WE::CursorLeft{..}, ..
-            }) => Some(Input::Cursor(false)),
-            Some(E::WindowEvent {
-                event: WE::MouseWheel{delta: MouseScrollDelta::PixelDelta(pos), ..}, ..
-            }) => {
-                let scale = self.window.scale_factor();
-                let pos = pos.to_logical::<f64>(scale);
-                Some(Input::Move(Motion::MouseScroll([pos.x as f64, pos.y as f64])))
-            }
-            Some(E::WindowEvent {
-                event: WE::MouseWheel{delta: MouseScrollDelta::LineDelta(x, y), ..}, ..
-            }) => Some(Input::Move(Motion::MouseScroll([x as f64, y as f64]))),
-            Some(E::WindowEvent {
-                event: WE::MouseInput{state: winit::event::ElementState::Pressed, button, ..}, ..
-            }) => Some(Input::Button(ButtonArgs {
-                state: ButtonState::Press,
-                button: Button::Mouse(map_mouse(button)),
-                scancode: None,
-            })),
-            Some(E::WindowEvent {
-                event: WE::MouseInput{state: winit::event::ElementState::Released, button, ..}, ..
-            }) => Some(Input::Button(ButtonArgs {
-                state: ButtonState::Release,
-                button: Button::Mouse(map_mouse(button)),
-                scancode: None,
-            })),
-            Some(E::WindowEvent {
-                event: WE::HoveredFile(path), ..
-            }) => Some(Input::FileDrag(FileDrag::Hover(path))),
-            Some(E::WindowEvent {
-                event: WE::DroppedFile(path), ..
-            }) => Some(Input::FileDrag(FileDrag::Drop(path))),
-            Some(E::WindowEvent {
-                event: WE::HoveredFileCancelled, ..
-            }) => Some(Input::FileDrag(FileDrag::Cancel)),
-            Some(E::WindowEvent { event: WE::CloseRequested, .. }) => {
-                if self.automatic_close {
-                    self.should_close = true;
-                }
-                Some(Input::Close(CloseArgs))
-            }
-            Some(E::UserEvent(UserEvent::WakeUp)) => None,
-            _ => {
-                *unknown = true;
-                None
-            }
+            _ => {}
         }
+
+        // Usual events are handled here and passed to user.
+        let input = map_window_event(
+            event,
+            self.get_window_ref().scale_factor(),
+            self.keyboard_ignore_modifiers,
+            unknown,
+            &mut self.last_key_pressed,
+            &mut self.devices,
+            &mut self.device_id_map,
+        );
+
+        let pre_event = self.pre_pop_front_event();
+        if pre_event.is_some() {
+            if let Some(input) = input {
+                self.events.push_back(Event::Input(input, None));
+            }
+            pre_event
+        } else {input}
     }
 
     fn fake_capture(&mut self) {
@@ -565,7 +368,7 @@ impl GlutinWindow {
             let dy = cy - pos[1];
             if dx != 0.0 || dy != 0.0 {
                 let pos = winit::dpi::LogicalPosition::new(cx, cy);
-                if let Ok(_) = self.window.set_cursor_position(pos) {
+                if let Ok(_) = self.get_window_ref().set_cursor_position(pos) {
                     self.last_cursor_pos = Some([cx, cy]);
                 }
             }
@@ -573,25 +376,221 @@ impl GlutinWindow {
     }
 }
 
+impl ApplicationHandler<UserEvent> for GlutinWindow {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        use glutin::display::GetGlDisplay;
+        use glutin::config::GlConfig;
+        use glutin::context::ContextApi;
+        use glutin::context::NotCurrentGlContext;
+        use raw_window_handle::HasRawWindowHandle;
+        use std::num::NonZeroU32;
+
+        let settings = &self.settings;
+
+        let template = config_template_builder_from_settings(settings);
+        let display_builder = glutin_winit::DisplayBuilder::new();
+        let (_, gl_config) = display_builder
+            .build(event_loop, template, |configs| {
+                configs.reduce(|accum, config| {
+                    let transparency_check = config.supports_transparency().unwrap_or(false)
+                        & !accum.supports_transparency().unwrap_or(false);
+
+                    if transparency_check || config.num_samples() > accum.num_samples() {
+                        config
+                    } else {
+                        accum
+                    }
+                })
+                .unwrap()
+            }).unwrap();
+
+        let window = event_loop.create_window(winit::window::Window::default_attributes()
+            .with_inner_size(LogicalSize::<f64>::new(
+                settings.get_size().width.into(),
+                settings.get_size().height.into(),
+            ))
+            .with_title(settings.get_title())
+        ).unwrap();
+
+        let raw_window_handle = window.raw_window_handle().unwrap();
+        let draw_size = window.inner_size();
+        let dw = NonZeroU32::new(draw_size.width).unwrap();
+        let dh = NonZeroU32::new(draw_size.height).unwrap();
+        let surface_attributes = surface_attributes_builder_from_settings(settings)
+            .build(raw_window_handle, dw, dh);
+
+        let display: glutin::display::Display = gl_config.display();
+        let surface = unsafe {display.create_window_surface(&gl_config, &surface_attributes).unwrap()};
+
+        let api = graphics_api_from_settings(settings).unwrap();
+        let context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(api.major as u8, api.minor as u8))))
+            .build(Some(raw_window_handle));
+
+        let fallback_context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(ContextApi::Gles(None))
+            .build(Some(raw_window_handle));
+
+        let legacy_context_attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_context_api(glutin::context::ContextApi::OpenGl(Some(glutin::context::Version::new(2, 1))))
+            .build(Some(raw_window_handle));
+
+        let mut not_current_gl_context = Some(unsafe {
+            if let Ok(x) = display.create_context(&gl_config, &context_attributes) {x}
+            else if let Ok(x) = display.create_context(&gl_config, &fallback_context_attributes) {x}
+            else {
+                display.create_context(&gl_config, &legacy_context_attributes).unwrap()
+            }
+        });
+
+        let ctx: glutin::context::PossiblyCurrentContext = not_current_gl_context.take().unwrap()
+            .make_current(&surface).unwrap();
+
+        if settings.get_vsync() {
+            surface.set_swap_interval(&ctx,
+                glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap())).unwrap();
+        }
+
+        // Load the OpenGL function pointers.
+        gl::load_with(|s| {
+            use std::ffi::CString;
+
+            let s = CString::new(s).expect("CString::new failed");
+            display.get_proc_address(&s) as *const _
+        });
+
+        self.ctx = Some(ctx);
+        self.surface = Some(surface);
+        self.display = Some(display);
+        self.window = Some(Arc::new(window));
+    }
+
+    fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            let window =  &self.get_window_ref();
+
+            match event {
+                WindowEvent::CloseRequested => {
+                    if self.automatic_close {
+                        self.should_close = true;
+                        event_loop.exit();
+                    }
+                }
+                WindowEvent::RedrawRequested => {
+                    window.request_redraw();
+                },
+                event => {
+                    let mut unknown = false;
+                    if let Some(ev) = self.handle_event(event, &mut unknown) {
+                        if !unknown {
+                            self.events.push_back(Event::Input(ev, None));
+                        }
+                    }
+                }
+            }
+        }
+}
+
 impl Window for GlutinWindow {
     fn size(&self) -> Size {
-        let size = self.window
-            .inner_size()
-            .to_logical::<u32>(self.window.scale_factor());
-        (size.width, size.height).into()
+        let window = self.get_window_ref();
+        let (w, h): (u32, u32) = window.inner_size().into();
+        let hidpi = window.scale_factor();
+        ((w as f64 / hidpi) as u32, (h as f64 / hidpi) as u32).into()
     }
-    fn draw_size(&self) -> Size {
-        let size = self.window.inner_size();
-        (size.width, size.height).into()
-    }
+
     fn should_close(&self) -> bool { self.should_close }
+
     fn set_should_close(&mut self, value: bool) { self.should_close = value; }
-    fn swap_buffers(&mut self) { let _ = self.surface.swap_buffers(&self.ctx); }
-    fn wait_event(&mut self) -> Event { self.wait_event() }
-    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Event> {
-        self.wait_event_timeout(timeout)
+
+    fn swap_buffers(&mut self) {
+        if let (Some(ctx), Some(surface)) = (&self.ctx, &self.surface) {
+            let _ = surface.swap_buffers(ctx);
+        }
     }
-    fn poll_event(&mut self) -> Option<Event> { self.poll_event() }
+
+    fn wait_event(&mut self) -> Event {
+        use winit::platform::pump_events::EventLoopExtPumpEvents;
+        use input::{IdleArgs, Loop};
+
+        // Add all events we got to the event queue, since winit only allows us to get all pending
+        //  events at once.
+        if let Some(mut event_loop) = std::mem::replace(&mut self.event_loop, None) {
+            let event_loop_proxy = event_loop.create_proxy();
+            event_loop_proxy
+                .send_event(UserEvent::WakeUp)
+                .expect("Event loop is closed before property handling all events.");
+            event_loop.pump_app_events(None, self);
+            self.event_loop = Some(event_loop);
+        }
+
+        // Get the first event in the queue
+        let event = self.events.pop_front();
+
+        // Check if we got a close event, if we did we need to mark ourselves as should-close
+        if let &Some(Event::Input(Input::Close(_), ..)) = &event {
+            self.set_should_close(true);
+        }
+
+        event.unwrap_or(Event::Loop(Loop::Idle(IdleArgs {dt: 0.0})))
+    }
+    fn wait_event_timeout(&mut self, timeout: Duration) -> Option<Event> {
+        use winit::platform::pump_events::EventLoopExtPumpEvents;
+
+        // Add all events we got to the event queue, since winit only allows us to get all pending
+        //  events at once.
+        if let Some(mut event_loop) = std::mem::replace(&mut self.event_loop, None) {
+            let event_loop_proxy = event_loop.create_proxy();
+            event_loop_proxy
+                .send_event(UserEvent::WakeUp)
+                .expect("Event loop is closed before property handling all events.");
+            event_loop.pump_app_events(Some(timeout), self);
+            self.event_loop = Some(event_loop);
+        }
+
+        // Get the first event in the queue
+        let event = self.events.pop_front();
+
+        // Check if we got a close event, if we did we need to mark ourselves as should-close
+        if let &Some(Event::Input(Input::Close(_), ..)) = &event {
+            self.set_should_close(true);
+        }
+
+        event
+    }
+    fn poll_event(&mut self) -> Option<Event> {
+        use winit::platform::pump_events::EventLoopExtPumpEvents;
+
+        // Add all events we got to the event queue, since winit only allows us to get all pending
+        //  events at once.
+        if let Some(mut event_loop) = std::mem::replace(&mut self.event_loop, None) {
+           let event_loop_proxy = event_loop.create_proxy();
+           event_loop_proxy
+               .send_event(UserEvent::WakeUp)
+               .expect("Event loop is closed before property handling all events.");
+           event_loop.pump_app_events(Some(Duration::ZERO), self);
+           self.event_loop = Some(event_loop);
+        }
+
+        // Get the first event in the queue
+        let event = self.events.pop_front();
+
+        // Check if we got a close event, if we did we need to mark ourselves as should-close
+        if let &Some(Event::Input(Input::Close(_), ..)) = &event {
+           self.set_should_close(true);
+        }
+
+        event
+     }
+
+    fn draw_size(&self) -> Size {
+        let size: (f64, f64) = self.get_window_ref().inner_size().into();
+        size.into()
+    }
 }
 
 impl BuildFromWindowSettings for GlutinWindow {
@@ -602,43 +601,69 @@ impl BuildFromWindowSettings for GlutinWindow {
 }
 
 impl AdvancedWindow for GlutinWindow {
-    fn get_title(&self) -> String { self.title.clone() }
-    fn set_title(&mut self, value: String) {
-        self.title = value;
-        self.window.set_title(&self.title);
+    fn get_title(&self) -> String {
+        self.title.clone()
     }
-    fn get_exit_on_esc(&self) -> bool { self.exit_on_esc }
-    fn set_exit_on_esc(&mut self, value: bool) { self.exit_on_esc = value; }
-    fn get_automatic_close(&self) -> bool { self.automatic_close }
-    fn set_automatic_close(&mut self, value: bool) { self.automatic_close = value; }
+
+    fn set_title(&mut self, value: String) {
+        self.get_window_ref().set_title(&value);
+        self.title = value;
+    }
+
+    fn get_exit_on_esc(&self) -> bool {
+        self.exit_on_esc
+    }
+
+    fn set_exit_on_esc(&mut self, value: bool) {
+        self.exit_on_esc = value
+    }
+
     fn set_capture_cursor(&mut self, value: bool) {
-        // Normally we would call `.grab_cursor(true)`
+        // Normally we would call `.set_cursor_grab`
         // but since relative mouse events does not work,
+        // because device deltas have unspecified coordinates,
         // the capturing of cursor is faked by hiding the cursor
         // and setting the position to the center of window.
         self.is_capturing_cursor = value;
-        self.window.set_cursor_visible(!value);
+        self.get_window_ref().set_cursor_visible(!value);
         if value {
             self.fake_capture();
         }
     }
-    fn show(&mut self) { self.window.set_visible(true); }
-    fn hide(&mut self) { self.window.set_visible(false); }
+
+    fn get_automatic_close(&self) -> bool {self.automatic_close}
+
+    fn set_automatic_close(&mut self, value: bool) {self.automatic_close = value}
+
+    fn show(&mut self) {
+        self.get_window_ref().set_visible(true);
+    }
+
+    fn hide(&mut self) {
+        self.get_window_ref().set_visible(false);
+    }
+
     fn get_position(&self) -> Option<Position> {
-        let pos = self.window.outer_position().ok()?;
-        let scale = self.window.scale_factor();
-        let winit::dpi::LogicalPosition { x, y } = pos.to_logical(scale);
-        Some(Position { x, y })
+        self.get_window_ref()
+            .outer_position()
+            .map(|p| Position { x: p.x, y: p.y })
+            .ok()
     }
-    fn set_position<P: Into<Position>>(&mut self, pos: P) {
-        let Position { x, y } = pos.into();
-        let pos = winit::dpi::LogicalPosition { x, y };
-        self.window.set_outer_position(pos);
+
+    fn set_position<P: Into<Position>>(&mut self, val: P) {
+        let val = val.into();
+        self.get_window_ref()
+            .set_outer_position(LogicalPosition::new(val.x as f64, val.y as f64))
     }
+
     fn set_size<S: Into<Size>>(&mut self, size: S) {
-        let Size { width, height } = size.into();
-        let size = winit::dpi::LogicalSize { width, height };
-        self.window.set_inner_size(size);
+        let size: Size = size.into();
+        let w = self.get_window_ref();
+        let hidpi = w.scale_factor();
+        let _ = w.request_inner_size(LogicalSize::new(
+            size.width as f64 * hidpi,
+            size.height as f64 * hidpi,
+        ));
     }
 }
 
@@ -647,146 +672,191 @@ impl OpenGLWindow for GlutinWindow {
         use std::ffi::CString;
 
         let s = CString::new(proc_name).expect("CString::new failed");
-        self.display.get_proc_address(&s) as *const _
+        self.display.as_ref().expect("No display").get_proc_address(&s) as *const _
     }
 
     fn is_current(&self) -> bool {
-        self.ctx.is_current()
+        if let Some(ctx) = &self.ctx {
+            ctx.is_current()
+        } else {false}
     }
 
     fn make_current(&mut self) {
-        let _ = self.ctx.make_current(&self.surface);
+        if let (Some(ctx), Some(surface)) = (&self.ctx, &self.surface) {
+            let _ = ctx.make_current(surface);
+        }
     }
 }
 
-/// Maps Glutin's key to Piston's key.
-pub fn map_key(keycode: winit::event::VirtualKeyCode) -> keyboard::Key {
-    use input::keyboard::Key;
-    use winit::event::VirtualKeyCode as K;
+fn map_key(input: &winit::event::KeyEvent, kim: KeyboardIgnoreModifiers) -> Key {
+    use winit::keyboard::NamedKey::*;
+    use winit::keyboard::Key::*;
+    use KeyboardIgnoreModifiers as KIM;
 
-    match keycode {
-        K::Key0 => Key::D0,
-        K::Key1 => Key::D1,
-        K::Key2 => Key::D2,
-        K::Key3 => Key::D3,
-        K::Key4 => Key::D4,
-        K::Key5 => Key::D5,
-        K::Key6 => Key::D6,
-        K::Key7 => Key::D7,
-        K::Key8 => Key::D8,
-        K::Key9 => Key::D9,
-        K::A => Key::A,
-        K::B => Key::B,
-        K::C => Key::C,
-        K::D => Key::D,
-        K::E => Key::E,
-        K::F => Key::F,
-        K::G => Key::G,
-        K::H => Key::H,
-        K::I => Key::I,
-        K::J => Key::J,
-        K::K => Key::K,
-        K::L => Key::L,
-        K::M => Key::M,
-        K::N => Key::N,
-        K::O => Key::O,
-        K::P => Key::P,
-        K::Q => Key::Q,
-        K::R => Key::R,
-        K::S => Key::S,
-        K::T => Key::T,
-        K::U => Key::U,
-        K::V => Key::V,
-        K::W => Key::W,
-        K::X => Key::X,
-        K::Y => Key::Y,
-        K::Z => Key::Z,
-        K::Apostrophe => Key::Unknown,
-        K::Backslash => Key::Backslash,
-        K::Back => Key::Backspace,
-        // K::CapsLock => Key::CapsLock,
-        K::Delete => Key::Delete,
-        K::Comma => Key::Comma,
-        K::Down => Key::Down,
-        K::End => Key::End,
-        K::Return => Key::Return,
-        K::Equals => Key::Equals,
-        K::Escape => Key::Escape,
-        K::F1 => Key::F1,
-        K::F2 => Key::F2,
-        K::F3 => Key::F3,
-        K::F4 => Key::F4,
-        K::F5 => Key::F5,
-        K::F6 => Key::F6,
-        K::F7 => Key::F7,
-        K::F8 => Key::F8,
-        K::F9 => Key::F9,
-        K::F10 => Key::F10,
-        K::F11 => Key::F11,
-        K::F12 => Key::F12,
-        K::F13 => Key::F13,
-        K::F14 => Key::F14,
-        K::F15 => Key::F15,
-        K::F16 => Key::F16,
-        K::F17 => Key::F17,
-        K::F18 => Key::F18,
-        K::F19 => Key::F19,
-        K::F20 => Key::F20,
-        K::F21 => Key::F21,
-        K::F22 => Key::F22,
-        K::F23 => Key::F23,
-        K::F24 => Key::F24,
-        // Possibly next code.
-        // K::F25 => Key::Unknown,
-        K::Numpad0 => Key::NumPad0,
-        K::Numpad1 => Key::NumPad1,
-        K::Numpad2 => Key::NumPad2,
-        K::Numpad3 => Key::NumPad3,
-        K::Numpad4 => Key::NumPad4,
-        K::Numpad5 => Key::NumPad5,
-        K::Numpad6 => Key::NumPad6,
-        K::Numpad7 => Key::NumPad7,
-        K::Numpad8 => Key::NumPad8,
-        K::Numpad9 => Key::NumPad9,
-        K::NumpadComma => Key::NumPadDecimal,
-        K::NumpadDivide => Key::NumPadDivide,
-        K::NumpadMultiply => Key::NumPadMultiply,
-        K::NumpadSubtract => Key::NumPadMinus,
-        K::NumpadAdd => Key::NumPadPlus,
-        K::NumpadEnter => Key::NumPadEnter,
-        K::NumpadEquals => Key::NumPadEquals,
-        K::LShift => Key::LShift,
-        K::LControl => Key::LCtrl,
-        K::LAlt => Key::LAlt,
-        K::RShift => Key::RShift,
-        K::RControl => Key::RCtrl,
-        K::RAlt => Key::RAlt,
-        // Map to backslash?
-        // K::GraveAccent => Key::Unknown,
-        K::Home => Key::Home,
-        K::Insert => Key::Insert,
-        K::Left => Key::Left,
-        K::LBracket => Key::LeftBracket,
-        // K::Menu => Key::Menu,
-        K::Minus => Key::Minus,
-        K::Numlock => Key::NumLockClear,
-        K::PageDown => Key::PageDown,
-        K::PageUp => Key::PageUp,
-        K::Pause => Key::Pause,
-        K::Period => Key::Period,
-        K::Snapshot => Key::PrintScreen,
-        K::Right => Key::Right,
-        K::RBracket => Key::RightBracket,
-        K::Scroll => Key::ScrollLock,
-        K::Semicolon => Key::Semicolon,
-        K::Slash => Key::Slash,
-        K::Space => Key::Space,
-        K::Tab => Key::Tab,
-        K::Up => Key::Up,
-        // K::World1 => Key::Unknown,
-        // K::World2 => Key::Unknown,
+    match input.logical_key {
+        Character(ref ch) => match ch.as_str() {
+            "0" | ")" if kim == KIM::AbcKeyCode => Key::D0,
+            "0" => Key::D0,
+            ")" => Key::RightParen,
+            "1" | "!" if kim == KIM::AbcKeyCode => Key::D1,
+            "1" => Key::D1,
+            "!" => Key::NumPadExclam,
+            "2" | "@" if kim == KIM::AbcKeyCode => Key::D2,
+            "2" => Key::D2,
+            "@" => Key::At,
+            "3" | "#" if kim == KIM::AbcKeyCode => Key::D3,
+            "3" => Key::D3,
+            "#" => Key::Hash,
+            "4" | "$" if kim == KIM::AbcKeyCode => Key::D4,
+            "4" => Key::D4,
+            "$" => Key::Dollar,
+            "5" | "%" if kim == KIM::AbcKeyCode => Key::D5,
+            "5" => Key::D5,
+            "%" => Key::Percent,
+            "6" | "^" if kim == KIM::AbcKeyCode => Key::D6,
+            "6" => Key::D6,
+            "^" => Key::Caret,
+            "7" | "&" if kim == KIM::AbcKeyCode => Key::D7,
+            "7" => Key::D7,
+            "&" => Key::Ampersand,
+            "8" | "*" if kim == KIM::AbcKeyCode => Key::D8,
+            "8" => Key::D8,
+            "*" => Key::Asterisk,
+            "9" | "(" if kim == KIM::AbcKeyCode => Key::D9,
+            "9" => Key::D9,
+            "(" => Key::LeftParen,
+            "a" | "A" => Key::A,
+            "b" | "B" => Key::B,
+            "c" | "C" => Key::C,
+            "d" | "D" => Key::D,
+            "e" | "E" => Key::E,
+            "f" | "F" => Key::F,
+            "g" | "G" => Key::G,
+            "h" | "H" => Key::H,
+            "i" | "I" => Key::I,
+            "j" | "J" => Key::J,
+            "k" | "K" => Key::K,
+            "l" | "L" => Key::L,
+            "m" | "M" => Key::M,
+            "n" | "N" => Key::N,
+            "o" | "O" => Key::O,
+            "p" | "P" => Key::P,
+            "q" | "Q" => Key::Q,
+            "r" | "R" => Key::R,
+            "s" | "S" => Key::S,
+            "t" | "T" => Key::T,
+            "u" | "U" => Key::U,
+            "v" | "V" => Key::V,
+            "w" | "W" => Key::W,
+            "x" | "X" => Key::X,
+            "y" | "Y" => Key::Y,
+            "z" | "Z" => Key::Z,
+            "'" | "\"" if kim == KIM::AbcKeyCode => Key::Quote,
+            "'" => Key::Quote,
+            "\"" => Key::Quotedbl,
+            ";" | ":" if kim == KIM::AbcKeyCode => Key::Semicolon,
+            ";" => Key::Semicolon,
+            ":" => Key::Colon,
+            "[" | "{" if kim == KIM::AbcKeyCode => Key::LeftBracket,
+            "[" => Key::LeftBracket,
+            "{" => Key::NumPadLeftBrace,
+            "]" | "}" if kim == KIM::AbcKeyCode => Key::RightBracket,
+            "]" => Key::RightBracket,
+            "}" => Key::NumPadRightBrace,
+            "\\" | "|" if kim == KIM::AbcKeyCode => Key::Backslash,
+            "\\" => Key::Backslash,
+            "|" => Key::NumPadVerticalBar,
+            "," | "<" if kim == KIM::AbcKeyCode => Key::Comma,
+            "," => Key::Comma,
+            "<" => Key::Less,
+            "." | ">" if kim == KIM::AbcKeyCode => Key::Period,
+            "." => Key::Period,
+            ">" => Key::Greater,
+            "/" | "?" if kim == KIM::AbcKeyCode => Key::Slash,
+            "/" => Key::Slash,
+            "?" => Key::Question,
+            "`" | "~" if kim == KIM::AbcKeyCode => Key::Backquote,
+            "`" => Key::Backquote,
+            // Piston v1.0 does not support `~` using modifier.
+            // Use `KeyboardIgnoreModifiers::AbcKeyCode` on window to fix this issue.
+            // It will be mapped to `Key::Backquote`.
+            "~" => Key::Unknown,
+            _ => Key::Unknown,
+        }
+        Named(Escape) => Key::Escape,
+        Named(F1) => Key::F1,
+        Named(F2) => Key::F2,
+        Named(F3) => Key::F3,
+        Named(F4) => Key::F4,
+        Named(F5) => Key::F5,
+        Named(F6) => Key::F6,
+        Named(F7) => Key::F7,
+        Named(F8) => Key::F8,
+        Named(F9) => Key::F9,
+        Named(F10) => Key::F10,
+        Named(F11) => Key::F11,
+        Named(F12) => Key::F12,
+        Named(F13) => Key::F13,
+        Named(F14) => Key::F14,
+        Named(F15) => Key::F15,
+
+        Named(Delete) => Key::Delete,
+
+        Named(ArrowLeft) => Key::Left,
+        Named(ArrowUp) => Key::Up,
+        Named(ArrowRight) => Key::Right,
+        Named(ArrowDown) => Key::Down,
+
+        Named(Backspace) => Key::Backspace,
+        Named(Enter) => Key::Return,
+        Named(Space) => Key::Space,
+
+        Named(Alt) => Key::LAlt,
+        Named(AltGraph) => Key::RAlt,
+        Named(Control) => Key::LCtrl,
+        Named(Super) => Key::Menu,
+        Named(Shift) => Key::LShift,
+
+        Named(Tab) => Key::Tab,
         _ => Key::Unknown,
     }
+}
+
+fn map_keyboard_input(
+    input: &winit::event::KeyEvent,
+    kim: KeyboardIgnoreModifiers,
+    unknown: &mut bool,
+    last_key_pressed: &mut Option<Key>,
+) -> Option<Input> {
+    let key = map_key(input, kim);
+
+    let state = if input.state == ElementState::Pressed {
+        // Filter repeated key presses (does not affect text repeat when holding keys).
+        if let Some(last_key) = &*last_key_pressed {
+            if last_key == &key {
+                *unknown = true;
+                return None;
+            }
+        }
+        *last_key_pressed = Some(key);
+
+        ButtonState::Press
+    } else {
+        if let Some(last_key) = &*last_key_pressed {
+            if last_key == &key {
+                *last_key_pressed = None;
+            }
+        }
+        ButtonState::Release
+    };
+
+    Some(Input::Button(ButtonArgs {
+        state: state,
+        button: Button::Keyboard(key),
+        scancode: if let winit::keyboard::PhysicalKey::Code(code) = input.physical_key {
+                Some(code as i32)
+            } else {None},
+    }))
 }
 
 /// Maps Glutin's mouse button to Piston's mouse button.
@@ -806,62 +876,122 @@ pub fn map_mouse(mouse_button: winit::event::MouseButton) -> MouseButton {
     }
 }
 
+/// Converts a winit's [`WindowEvent`] into a piston's [`Input`].
+///
+/// For some events that will not be passed to the user, returns `None`.
+fn map_window_event(
+    window_event: WindowEvent,
+    scale_factor: f64,
+    kim: KeyboardIgnoreModifiers,
+    unknown: &mut bool,
+    last_key_pressed: &mut Option<Key>,
+    devices: &mut u32,
+    device_id_map: &mut FxHashMap<DeviceId, u32>,
+) -> Option<Input> {
+    use input::FileDrag;
+
+    match window_event {
+        WindowEvent::DroppedFile(path) =>
+            Some(Input::FileDrag(FileDrag::Drop(path))),
+        WindowEvent::HoveredFile(path) =>
+            Some(Input::FileDrag(FileDrag::Hover(path))),
+        WindowEvent::HoveredFileCancelled =>
+            Some(Input::FileDrag(FileDrag::Cancel)),
+        WindowEvent::Resized(size) => Some(Input::Resize(ResizeArgs {
+            window_size: [size.width as f64, size.height as f64],
+            draw_size: Size {
+                width: size.width as f64,
+                height: size.height as f64,
+            }
+            .into(),
+        })),
+        WindowEvent::CloseRequested => Some(Input::Close(CloseArgs)),
+        WindowEvent::Destroyed => Some(Input::Close(CloseArgs)),
+        WindowEvent::Focused(focused) => Some(Input::Focus(focused)),
+        WindowEvent::KeyboardInput { ref event, .. } => {
+            map_keyboard_input(event, kim, unknown, last_key_pressed)
+        }
+        WindowEvent::CursorMoved { position, .. } => {
+            let position = position.to_logical(scale_factor);
+            Some(Input::Move(Motion::MouseCursor([position.x, position.y])))
+        }
+        WindowEvent::CursorEntered { .. } => Some(Input::Cursor(true)),
+        WindowEvent::CursorLeft { .. } => Some(Input::Cursor(false)),
+        WindowEvent::MouseWheel { delta, .. } => match delta {
+            MouseScrollDelta::PixelDelta(position) => {
+                let position = position.to_logical(scale_factor);
+                Some(Input::Move(Motion::MouseScroll([position.x, position.y])))
+            }
+            MouseScrollDelta::LineDelta(x, y) =>
+                Some(Input::Move(Motion::MouseScroll([x as f64, y as f64]))),
+        },
+        WindowEvent::MouseInput { state, button, .. } => {
+            let button = map_mouse(button);
+            let state = match state {
+                ElementState::Pressed => ButtonState::Press,
+                ElementState::Released => ButtonState::Release,
+            };
+
+            Some(Input::Button(ButtonArgs {
+                state,
+                button: Button::Mouse(button),
+                scancode: None,
+            }))
+        }
+        WindowEvent::AxisMotion { device_id, axis, value } => {
+            use input::ControllerAxisArgs;
+
+            Some(Input::Move(Motion::ControllerAxis(ControllerAxisArgs::new(
+                {
+                    if let Some(id) = device_id_map.get(&device_id) {*id}
+                    else {
+                        let id = *devices;
+                        *devices += 1;
+                        device_id_map.insert(device_id, id);
+                        id
+                    }
+                },
+                axis as u8,
+                value,
+            ))))
+        }
+        WindowEvent::Touch(winit::event::Touch { phase, location, id, .. }) => {
+            use winit::event::TouchPhase;
+            use input::{Touch, TouchArgs};
+
+            let location = location.to_logical::<f64>(scale_factor);
+
+            Some(Input::Move(Motion::Touch(TouchArgs::new(
+                0, id as i64, [location.x, location.y], 1.0, match phase {
+                    TouchPhase::Started => Touch::Start,
+                    TouchPhase::Moved => Touch::Move,
+                    TouchPhase::Ended => Touch::End,
+                    TouchPhase::Cancelled => Touch::Cancel
+                }
+            ))))
+        }
+        // Events not built-in by Piston v1.0.
+        // It is possible to use Piston's `Event::Custom`.
+        // This might be added as a library in the future to Piston's ecosystem.
+        WindowEvent::TouchpadPressure { .. } |
+        WindowEvent::PinchGesture { .. } |
+        WindowEvent::RotationGesture { .. } |
+        WindowEvent::PanGesture { .. } |
+        WindowEvent::DoubleTapGesture { .. } => None,
+        WindowEvent::ScaleFactorChanged { .. } => None,
+        WindowEvent::ActivationTokenDone { .. } => None,
+        WindowEvent::ThemeChanged(_) => None,
+        WindowEvent::Ime(_) => None,
+        WindowEvent::Occluded(_) => None,
+        WindowEvent::RedrawRequested { .. } => None,
+        WindowEvent::Moved(_) => None,
+        WindowEvent::ModifiersChanged(_) => None,
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 /// Custom events for the glutin event loop
 pub enum UserEvent {
     /// Do nothing, just spin the event loop
     WakeUp,
-}
-
-// XXX Massive Hack XXX: `wait_event` and `wait_event_timeout` can't handle non-'static events, so
-// they need to ignore events like `WindowEvent::ScaleFactorChanged` that contain references.
-fn to_static_event(event: winit::event::Event<UserEvent>) -> Option<winit::event::Event<'static, UserEvent>> {
-    use winit::event::Event as E;
-    use winit::event::WindowEvent as WE;
-    let event = match event {
-        E::NewEvents(s) => E::NewEvents(s),
-        E::WindowEvent { window_id, event } => E::WindowEvent {
-            window_id,
-            event: match event {
-                WE::Resized(size) => WE::Resized(size),
-                WE::Moved(pos) => WE::Moved(pos),
-                WE::CloseRequested => WE::CloseRequested,
-                WE::Destroyed => WE::Destroyed,
-                WE::DroppedFile(path) => WE::DroppedFile(path),
-                WE::HoveredFile(path) => WE::HoveredFile(path),
-                WE::HoveredFileCancelled => WE::HoveredFileCancelled,
-                WE::ReceivedCharacter(c) => WE::ReceivedCharacter(c),
-                WE::Focused(b) => WE::Focused(b),
-                WE::KeyboardInput { device_id, input, is_synthetic } => WE::KeyboardInput { device_id, input, is_synthetic },
-                WE::ModifiersChanged(_) => return None, // XXX?
-                #[allow(deprecated)]
-                WE::CursorMoved { device_id, position, modifiers } => WE::CursorMoved { device_id, position, modifiers },
-                WE::CursorEntered { device_id } => WE::CursorEntered { device_id },
-                WE::CursorLeft { device_id } => WE::CursorLeft { device_id },
-                #[allow(deprecated)]
-                WE::MouseWheel { device_id, delta, phase, modifiers } => WE::MouseWheel { device_id, delta, phase, modifiers },
-                #[allow(deprecated)]
-                WE::MouseInput { device_id, state, button, modifiers } => WE::MouseInput { device_id, state, button, modifiers },
-                WE::TouchpadPressure { device_id, pressure, stage } => WE::TouchpadPressure { device_id, pressure, stage },
-                WE::AxisMotion { device_id, axis, value } => WE::AxisMotion { device_id, axis, value },
-                WE::Touch(touch) => WE::Touch(touch),
-                WE::ScaleFactorChanged { .. } => return None,
-                WE::ThemeChanged(theme) => WE::ThemeChanged(theme),
-                WE::Ime(_) => return None,
-                WE::TouchpadMagnify { .. } => return None,
-                WE::TouchpadRotate { .. } => return None,
-                WE::Occluded(_) => return None,
-                WE::SmartMagnify { .. } => return None,
-            },
-        },
-        E::DeviceEvent { device_id, event } => E::DeviceEvent { device_id, event },
-        E::UserEvent(e) => E::UserEvent(e),
-        E::Suspended => E::Suspended,
-        E::Resumed => E::Resumed,
-        E::MainEventsCleared => E::MainEventsCleared,
-        E::RedrawRequested(window_id) => E::RedrawRequested(window_id),
-        E::RedrawEventsCleared => E::RedrawEventsCleared,
-        E::LoopDestroyed => E::LoopDestroyed,
-    };
-    Some(event)
 }
