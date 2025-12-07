@@ -200,7 +200,7 @@ impl GlutinWindow {
         let title = settings.get_title();
         let exit_on_esc = settings.get_exit_on_esc();
 
-        Ok(GlutinWindow {
+        let mut w = GlutinWindow {
             ctx: None,
             display: None,
             surface: None,
@@ -221,7 +221,10 @@ impl GlutinWindow {
 
             devices: 0,
             device_id_map: FxHashMap::default(),
-        })
+        };
+        // Causes the window to be created through `ApplicationHandler::request_redraw`.
+        if let Some(e) = w.poll_event() {w.events.push_front(e)}
+        Ok(w)
     }
 
     /// Gets a reference to the window.
