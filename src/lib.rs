@@ -662,10 +662,9 @@ impl AdvancedWindow for GlutinWindow {
     fn set_size<S: Into<Size>>(&mut self, size: S) {
         let size: Size = size.into();
         let w = self.get_window_ref();
-        let hidpi = w.scale_factor();
         let _ = w.request_inner_size(LogicalSize::new(
-            size.width as f64 * hidpi,
-            size.height as f64 * hidpi,
+            size.width as f64,
+            size.height as f64,
         ));
     }
 }
